@@ -1,0 +1,18 @@
+node_modules/
+.env
+data/*.json
+!data/.gitkeep
+
+# LangGraph API
+.langgraph_api
+
+# Large or generated data
+data/references/
+data/*.gz
+data/*.prev
+data/*.log
+data/*.err
+.claude/
+__pycache__/
+*.pyc
+.env.example

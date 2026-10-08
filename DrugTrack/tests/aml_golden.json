@@ -1,0 +1,25 @@
+{
+  "description": "User-declared expected APPROVED drugs at the AML parent node (MONDO_0018874) under the AACT x Open Targets logic. Any drift between this list and the exported approved branch is reported by the exporter, never auto-corrected.",
+  "declared_by": "user, 2026-09-20 (18 approved drugs, 'all real and correct')",
+  "scope_id": "MONDO_0018874",
+  "approved_names": [
+    "AZACITIDINE",
+    "CYTARABINE",
+    "DAUNORUBICIN",
+    "DAUNORUBICIN HYDROCHLORIDE",
+    "ENASIDENIB MESYLATE",
+    "GEMTUZUMAB OZOGAMICIN",
+    "GILTERITINIB",
+    "GILTERITINIB FUMARATE",
+    "GLASDEGIB MALEATE",
+    "HISTAMINE DIHYDROCHLORIDE",
+    "IDARUBICIN HYDROCHLORIDE",
+    "IVOSIDENIB",
+    "MELPHALAN",
+    "MIDOSTAURIN",
+    "OLUTASIDENIB",
+    "QUIZARTINIB DIHYDROCHLORIDE",
+    "SARGRAMOSTIM",
+    "TAGRAXOFUSP"
+  ]
+}

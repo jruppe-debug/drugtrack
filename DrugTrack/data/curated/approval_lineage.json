@@ -1,0 +1,192 @@
+{
+ "_about": "Human-entered approval lineage. Each chain step = one FDA approval event and the trial(s) the reviewer entered as its efficacy basis. tools/lineage_verify.py checks every entry against ClinicalTrials.gov and the cached Drugs@FDA label/review text; nothing here reaches the tree unless it is verified or explicitly shown as needs_review.",
+ "_fields": {
+  "aliases": "Extra trial identifiers not in the registry record (sponsor protocol IDs, acronyms). Matched whole-token in FDA text. Also fed into approval_anchor.py.",
+  "chain[].lead": "Trial(s) the step is credited to. Must be named in a Label or Review at the step's approval event, outside postmarketing-requirement context.",
+  "chain[].co_basis": "Other trials FDA used for the same approval. Verified the same way; shown beside the lead.",
+  "chain[].precursors": "Earlier-phase trials that led to the lead trial. 'doc_supported' when the approval documents name them, else 'registry_only'.",
+  "chain[].approval.type": "accelerated | regular, as entered. Verifier checks the approval letter for 21 CFR 314.510 / 601.41 (accelerated) wording.",
+  "entered_by": "Who entered the step. Steps entered by Claude from FDA documents are marked so the user can confirm them.",
+  "intervention_names": "Names the registry may use for the drug (code names). Registry gate requires one of them in the trial's interventions.",
+  "chain[].accept": "Reason prefixes (as printed by lineage_verify.py) the reviewer has checked and accepted, e.g. 'NCT02005471: already named'. Status becomes verified_with_override."
+ },
+ "aliases": {
+  "NCT00651261": [
+   "A2301",
+   "CPKC412A2301",
+   "RATIFY"
+  ],
+  "NCT02242942": [
+   "CLL14"
+  ],
+  "NCT02993523": [
+   "VIALE-A"
+  ],
+  "NCT03069352": [
+   "VIALE-C"
+  ]
+ },
+ "drugs": {
+  "VENETOCLAX": {
+   "chembl": "CHEMBL3137309",
+   "mechanism": {
+    "class": "BCL-2 inhibitor",
+    "targets": [
+     "BCL2"
+    ]
+   },
+   "intervention_names": [
+    "venetoclax",
+    "ABT-199",
+    "GDC-0199"
+   ],
+   "application": "NDA208573",
+   "chain": [
+    {
+     "step": "M13-982",
+     "disease": "CLL",
+     "indication": "CLL with 17p deletion, after at least one prior therapy",
+     "phase_entered": "PHASE2",
+     "lead": [
+      "NCT01889186"
+     ],
+     "co_basis": [],
+     "approval": {
+      "date": "2016-04-11",
+      "submission": "ORIG",
+      "type": "accelerated",
+      "kind": "original_indication"
+     },
+     "precursors": [
+      {
+       "nct": "NCT01328626",
+       "relation": "first-in-human dose escalation (M12-175)"
+      }
+     ],
+     "entered_by": "user"
+    },
+    {
+     "step": "MURANO",
+     "disease": "CLL",
+     "indication": "Relapsed/refractory CLL/SLL, with rituximab",
+     "phase_entered": "PHASE3",
+     "lead": [
+      "NCT02005471"
+     ],
+     "co_basis": [],
+     "approval": {
+      "date": "2018-06-08",
+      "submission": "SUPPL",
+      "type": "regular",
+      "kind": "label_expansion"
+     },
+     "precursors": [],
+     "entered_by": "user"
+    },
+    {
+     "step": "M14-358",
+     "disease": "AML",
+     "indication": "Newly diagnosed AML, age 75+ or ineligible for intensive induction, with azacitidine/decitabine or LDAC",
+     "phase_entered": "PHASE1_2",
+     "lead": [
+      "NCT02203773"
+     ],
+     "co_basis": [
+      "NCT02287233"
+     ],
+     "approval": {
+      "date": "2018-11-21",
+      "submission": "SUPPL",
+      "type": "accelerated",
+      "kind": "label_expansion"
+     },
+     "precursors": [],
+     "entered_by": "user (co_basis M14-387 added by Claude from the s009 label)"
+    },
+    {
+     "step": "CLL14",
+     "disease": "CLL",
+     "indication": "Previously untreated CLL/SLL, with obinutuzumab",
+     "phase_entered": "PHASE3",
+     "lead": [
+      "NCT02242942"
+     ],
+     "co_basis": [],
+     "approval": {
+      "date": "2019-05-15",
+      "submission": "SUPPL",
+      "type": "regular",
+      "kind": "label_expansion"
+     },
+     "precursors": [],
+     "entered_by": "user"
+    },
+    {
+     "step": "VIALE-A",
+     "disease": "AML",
+     "indication": "Newly diagnosed AML, age 75+ or ineligible for intensive induction, with azacitidine/decitabine or LDAC (full approval)",
+     "phase_entered": "PHASE3",
+     "lead": [
+      "NCT02993523"
+     ],
+     "co_basis": [
+      "NCT03069352"
+     ],
+     "approval": {
+      "date": "2020-10-16",
+      "submission": "SUPPL",
+      "type": "regular",
+      "kind": "label_expansion"
+     },
+     "precursors": [
+      {
+       "nct": "NCT02203773",
+       "relation": "Ph1b venetoclax + HMA (M14-358)"
+      },
+      {
+       "nct": "NCT02287233",
+       "relation": "Ph1/2 venetoclax + LDAC (M14-387), precursor of VIALE-C"
+      }
+     ],
+     "entered_by": "user (co_basis VIALE-C and precursors added by Claude from the s009 / s020 documents)"
+    }
+   ]
+  },
+  "MIDOSTAURIN": {
+   "chembl": "CHEMBL608533",
+   "mechanism": {
+    "class": "multi-kinase (FLT3) inhibitor",
+    "targets": [
+     "FLT3",
+     "KIT"
+    ]
+   },
+   "intervention_names": [
+    "midostaurin",
+    "PKC412",
+    "CGP 41251"
+   ],
+   "application": "NDA207997",
+   "chain": [
+    {
+     "step": "RATIFY",
+     "disease": "AML",
+     "indication": "Newly diagnosed FLT3-mutated AML, with standard induction and consolidation",
+     "phase_entered": "PHASE3",
+     "lead": [
+      "NCT00651261"
+     ],
+     "co_basis": [],
+     "approval": {
+      "date": "2017-04-28",
+      "submission": "ORIG",
+      "type": "regular",
+      "kind": "original_indication"
+     },
+     "precursors": [],
+     "entered_by": "Claude (FDA review calls the trial Study A2301)"
+    }
+   ]
+  }
+ }
+}
