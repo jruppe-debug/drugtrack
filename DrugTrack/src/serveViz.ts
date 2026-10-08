@@ -1,0 +1,145 @@
+import { createServer } from "node:http";
+import { readFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import { ROOT, config } from "./config.js";
+
+/**
+ * Zero-dependency local dashboard: built-in node:http server, no Express,
+ * no build step. Deliberate choice after this session's repeated pain from
+ * native-module and version-mismatch issues (koffi, node-pty, langgraph-cli)
+ * - this has nothing that can conflict, ever.
+ */
+const PORT = Number(process.env.VIZ_PORT ?? 4300);
+const manifestPath = join(ROOT, "data", "ui-manifest.json");
+const critiquePath = join(ROOT, "data", "critique.json");
+
+const server = createServer(async (req, res) => {
+  try {
+    if (req.url === "/") {
+      res.writeHead(302, { Location: "/disease" });
+      res.end();
+      return;
+    }
+
+    if (req.url === "/index.html") {
+      const html = await readFile(join(ROOT, "public", "index.html"), "utf8");
+      res.writeHead(200, { "Content-Type": "text/html", "Cache-Control": "no-store" });
+      res.end(html);
+      return;
+    }
+
+    if (req.url === "/api/graph") {
+      const raw = existsSync(config.dbPath)
+        ? await readFile(config.dbPath, "utf8")
+        : JSON.stringify({ entities: [], edges: [] });
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      res.end(raw);
+      return;
+    }
+
+    if (req.url === "/api/manifest") {
+      // Always 200, never a real HTTP error status - a missing manifest is
+      // an expected, normal state (uiVis hasn't succeeded yet), not a fault.
+      // Using 404 for this made the browser console log a wall of "failed
+      // to load resource" errors every 4s from the auto-refresh, which is
+      // exactly the kind of noise that makes a working page look broken.
+      if (!existsSync(manifestPath)) {
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+        res.end(JSON.stringify({ available: false }));
+        return;
+      }
+      const raw = await readFile(manifestPath, "utf8");
+      const parsed = JSON.parse(raw);
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      res.end(JSON.stringify({ available: true, ...parsed }));
+      return;
+    }
+
+    if (req.url === "/disease") {
+      const html = await readFile(join(ROOT, "public", "disease.html"), "utf8");
+      res.writeHead(200, { "Content-Type": "text/html", "Cache-Control": "no-store" });
+      res.end(html);
+      return;
+    }
+
+    // Deterministic disease tree (tools/export_disease_tree.py). Served
+    // byte-for-byte: this server never parses, filters, or rewrites it.
+    if (req.url === "/api/tree") {
+      const treePath = join(ROOT, "data", "tree.json");
+      if (!existsSync(treePath)) {
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+        res.end(JSON.stringify({ available: false }));
+        return;
+      }
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      res.end(await readFile(treePath, "utf8"));
+      return;
+    }
+
+    // Drug + indication branches: NCT list and MeSH-tagged PubMed article support
+    // (tools/drug_lit.py), shown on the main viewer. Served byte-for-byte like /api/tree.
+    if (req.url === "/api/drug-lit") {
+      const drugLitPath = join(ROOT, "data", "drug_lit_imatinib.json");
+      if (!existsSync(drugLitPath)) {
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+        res.end(JSON.stringify({ available: false }));
+        return;
+      }
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      res.end(await readFile(drugLitPath, "utf8"));
+      return;
+    }
+
+    // PubMed support for one drug node of the disease tree, scoped to the tree's disease
+    // (tools/scope_drug_lit.py). Served byte-for-byte like /api/tree.
+    if (req.url === "/api/scope-lit") {
+      const scopeLitPath = join(ROOT, "data", "scope_lit_CHEMBL941.json");
+      if (!existsSync(scopeLitPath)) {
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+        res.end(JSON.stringify({ available: false }));
+        return;
+      }
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      res.end(await readFile(scopeLitPath, "utf8"));
+      return;
+    }
+
+    // Playwright link-check results (tools/validate_lit_urls.py), keyed by PMID.
+    // Served byte-for-byte like /api/tree.
+    if (req.url === "/api/lit") {
+      const litPath = join(ROOT, "data", "lit_validated.json");
+      if (!existsSync(litPath)) {
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+        res.end(JSON.stringify({ available: false }));
+        return;
+      }
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      res.end(await readFile(litPath, "utf8"));
+      return;
+    }
+
+    if (req.url === "/api/critique") {
+      if (!existsSync(critiquePath)) {
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+        res.end(JSON.stringify({ available: false }));
+        return;
+      }
+      const raw = await readFile(critiquePath, "utf8");
+      const parsed = JSON.parse(raw);
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      res.end(JSON.stringify({ available: true, ...parsed }));
+      return;
+    }
+
+    res.writeHead(404);
+    res.end("Not found");
+  } catch (err) {
+    res.writeHead(500, { "Content-Type": "text/plain" });
+    res.end(err instanceof Error ? err.message : String(err));
+  }
+});
+
+server.listen(PORT, () => {
+  console.log(`DrugTrack viewer running at http://localhost:${PORT}`);
+});

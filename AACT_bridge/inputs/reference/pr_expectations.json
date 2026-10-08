@@ -1,0 +1,19 @@
+{
+  "description": "Claims taken from FDA approval pages / press releases (via web search on 2026-09-20; text quoted from the FDA pages). The exporter checks that the tree agrees with each claim and reports PASS/FAIL. 'group' is the expected mutation group under Approved (General = not mutation-restricted).",
+  "claims": [
+    {"id": "revumenib_npm1_aml", "drug": "REVUMENIB", "approval_date": "2025-10-24", "group": "NPM1", "claim": "relapsed or refractory AML with a susceptible NPM1 mutation, adults and pediatric patients 1 year and older", "source_id": "fda_revumenib_npm1"},
+    {"id": "ziftomenib_npm1_aml", "drug": "ZIFTOMENIB", "approval_date": "2025-11-13", "group": "NPM1", "claim": "adults with relapsed or refractory AML with a susceptible NPM1 mutation", "source_id": "fda_ziftomenib_npm1"},
+    {"id": "gilteritinib_flt3", "drug": "GILTERITINIB", "approval_date": "2018-11-28", "group": "FLT3", "claim": "relapsed or refractory AML with a FLT3 mutation", "source_id": "fda_gilteritinib"},
+    {"id": "ivosidenib_idh1", "drug": "IVOSIDENIB", "approval_date": "2018-07-20", "group": "IDH1", "claim": "relapsed or refractory AML with a susceptible IDH1 mutation", "source_id": "fda_ivosidenib"},
+    {"id": "olutasidenib_idh1", "drug": "OLUTASIDENIB", "approval_date": "2022-12-01", "group": "IDH1", "claim": "relapsed or refractory AML with a susceptible IDH1 mutation", "source_id": "fda_olutasidenib"},
+    {"id": "enasidenib_idh2", "drug": "ENASIDENIB", "approval_date": "2017-08-01", "group": "IDH2", "claim": "relapsed or refractory AML with an IDH2 mutation", "source_id": "fda_enasidenib"},
+    {"id": "quizartinib_flt3_itd", "drug": "QUIZARTINIB", "approval_date": "2023-07-20", "group": "FLT3", "claim": "newly diagnosed AML that is FLT3-ITD positive, with cytarabine and anthracycline", "source_id": "fda_quizartinib"},
+    {"id": "venetoclax_general", "drug": "VENETOCLAX", "approval_date": "2018-11-21", "group": "General", "claim": "newly diagnosed AML in adults 75+ or with comorbidities, with azacitidine, decitabine or low-dose cytarabine (accelerated approval)", "source_id": "fda_venetoclax_aml"},
+    {"id": "inqovi_plus_venetoclax", "drug": "CEDAZURIDINE", "approval_date": "2026-05-13", "group": "General", "claim": "Inqovi (decitabine + cedazuridine) with venetoclax for newly diagnosed AML, adults 75+ or with comorbidities", "source_id": "fda_inqovi_venetoclax"},
+    {"id": "gemtuzumab_general", "drug": "GEMTUZUMAB OZOGAMICIN", "approval_date": "2017-09-01", "group": "General", "claim": "CD33-positive AML (CD33 is an antigen, not a mutation)", "source_id": "fda_gemtuzumab"},
+    {"id": "oral_azacitidine_general", "drug": "AZACITIDINE", "approval_date": "2020-09-01", "group": "General", "claim": "Onureg tablets for continued treatment of AML in first remission", "source_id": "fda_onureg"}
+  ],
+  "must_not_be_forced": [
+    {"id": "cobicistat_not_in_revuforj_sources", "drug": "REVUMENIB", "must_not_contain": "COBICISTAT", "note": "Neither revuforj.com/results nor the FDA revumenib pages mention cobicistat; a revumenib + cobicistat regimen must not be labelled as a verified combination."}
+  ]
+}

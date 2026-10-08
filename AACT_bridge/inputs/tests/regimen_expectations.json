@@ -1,0 +1,35 @@
+{
+  "description": "Categorisation expectations for the AML scope (MONDO_0018874). Each is grounded in live evidence fetched 2026-09-20, NOT in memory; the 'evidence' field says where to re-check it. The exporter reports PASS/FAIL against these on every run and never edits the tree to make them pass.",
+  "expectations": [
+    {
+      "id": "decitabine_broader_term_eu",
+      "claim": "Decitabine is approved at a BROADER term (myeloid leukemia) by the EU only; its US labels are MDS-only.",
+      "evidence": "OT clinical_report: DailyMed x8 (MDS/CMML/RAEB/anemia), EMA + EMA Human Drugs (myeloid leukemia). openFDA Dacogen/generic labels 2020-2026: MDS only."
+    },
+    {
+      "id": "cedazuridine_broader_term_eu_us_regimen",
+      "claim": "Cedazuridine is approved at a broader term by the EU; the current US Inqovi label adds an AML clause only IN COMBINATION with venetoclax.",
+      "evidence": "OT: EMA Human Drugs (leukemia, myeloid), FDA (myelodysplastic syndrome). openFDA INQOVI label eff. 20260525 item 1.1 MDS + 'In combination with venetoclax ... newly diagnosed acute myeloid leukemia'."
+    },
+    {
+      "id": "venetoclax_label_only",
+      "claim": "Venetoclax has NO Open Targets regulatory report for AML (only CLL/SLL), yet the US Venclexta label names AML with azacitidine, decitabine, or low-dose cytarabine.",
+      "evidence": "OT: DailyMed/FDA/PMDA CLL, EMA CLL. openFDA Venclexta label indications."
+    },
+    {
+      "id": "enasidenib_parent_salt_merge",
+      "claim": "ENASIDENIB (parent CHEMBL3989908, Phase 3) and ENASIDENIB MESYLATE (salt CHEMBL3989931, approved) are ONE drug and must be merged by parentId.",
+      "evidence": "OT drug_molecule: CHEMBL3989931.parentId = CHEMBL3989908."
+    },
+    {
+      "id": "ascertain_v_regimen",
+      "claim": "NCT04657081 (ASTX727 + venetoclax) resolves to the regimen decitabine + cedazuridine + venetoclax, and that regimen matches the Inqovi label's AML clause.",
+      "evidence": "AACT design_groups: one arm with 'Decitabine and Cedazuridine (ASTX727)' + 'Venetoclax'; OT synonym 'CEDAZURIDINE COMPONENT OF ASTX727'."
+    },
+    {
+      "id": "viale_a_placebo_arm_excluded",
+      "claim": "NCT02993523 (VIALE-A) counts under venetoclax + azacitidine, and its 'Placebo + Azacitidine' arm is NOT counted as an azacitidine-monotherapy regimen.",
+      "evidence": "AACT design_groups: arm typed PLACEBO_COMPARATOR contains a Placebo intervention; the venetoclax arm is typed ACTIVE_COMPARATOR (arm type is unreliable, so contents decide)."
+    }
+  ]
+}

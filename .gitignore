@@ -1,0 +1,21 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+output/*.json
+output/*.csv
+output/*.db
+data/opentargets_bulk/
+
+# Added during the move to ~/repos/drugtrack. See DATA.md for how to get the excluded data back.
+.env.*
+!.env.example
+node_modules/
+.claude/scheduled_tasks.lock
+*.db
+*.db-journal
+*.parquet
+DrugTrack/data/references/
+metabase/aact/
+DrugTrack/data/*.prev
+DrugTrack/data/references_run.*

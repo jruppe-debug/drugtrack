@@ -1,0 +1,157 @@
+{
+  "description": "Public pages used as an independent cross-check of the tree. Each page is fetched raw (plain HTTP GET, tags stripped), cached, and keyword-searched deterministically; no LLM reads them. 'drugs' are the drugs the page is about. Add a URL here and re-run the exporter to extend coverage. 'drugs' = the drug(s) the approval belongs to; 'partners' = drugs named on the page as combination partners.",
+  "sources": [
+    {
+      "id": "revuforj_results",
+      "kind": "manufacturer_site",
+      "drugs": [
+        "REVUMENIB"
+      ],
+      "url": "https://revuforj.com/results/",
+      "added_by": "user (tracking parameters stripped)",
+      "partners": []
+    },
+    {
+      "id": "fda_revumenib_npm1",
+      "kind": "fda_approval_page",
+      "drugs": [
+        "REVUMENIB"
+      ],
+      "url": "https://www.fda.gov/drugs/resources-information-approved-drugs/fda-approves-revumenib-relapsed-or-refractory-acute-myeloid-leukemia-susceptible-npm1-mutation",
+      "partners": []
+    },
+    {
+      "id": "fda_revumenib_kmt2a",
+      "kind": "fda_approval_page",
+      "drugs": [
+        "REVUMENIB"
+      ],
+      "url": "https://www.fda.gov/drugs/resources-information-approved-drugs/fda-approves-revumenib-relapsed-or-refractory-acute-leukemia-kmt2a-translocation",
+      "partners": []
+    },
+    {
+      "id": "fda_ziftomenib_npm1",
+      "kind": "fda_approval_page",
+      "drugs": [
+        "ZIFTOMENIB"
+      ],
+      "url": "https://www.fda.gov/drugs/resources-information-approved-drugs/fda-approves-ziftomenib-relapsed-or-refractory-acute-myeloid-leukemia-npm1-mutation",
+      "partners": []
+    },
+    {
+      "id": "fda_inqovi_venetoclax",
+      "kind": "fda_approval_page",
+      "drugs": [
+        "DECITABINE",
+        "CEDAZURIDINE"
+      ],
+      "url": "https://www.fda.gov/drugs/resources-information-approved-drugs/fda-approves-oral-combination-decitabine-and-cedazuridine-tablets-venetoclax-newly-diagnosed-acute",
+      "partners": [
+        "VENETOCLAX"
+      ]
+    },
+    {
+      "id": "taiho_inqovi_venetoclax_pr",
+      "kind": "manufacturer_press_release",
+      "drugs": [
+        "DECITABINE",
+        "CEDAZURIDINE"
+      ],
+      "url": "https://www.taihooncology.com/us/news/us-fda-approves-inqovi-in-combination-with-venetoclax-the-first-all-oral-combination-treatment-for-patients-with-acute-myeloid-leukemia-who-are-ineligible-for-intensive-induction-chemotherapy/",
+      "partners": [
+        "VENETOCLAX"
+      ]
+    },
+    {
+      "id": "fda_venetoclax_aml",
+      "kind": "fda_approval_page",
+      "drugs": [
+        "VENETOCLAX"
+      ],
+      "url": "https://www.fda.gov/drugs/fda-approves-venetoclax-combination-aml-adults",
+      "partners": [
+        "AZACITIDINE",
+        "DECITABINE",
+        "CYTARABINE"
+      ]
+    },
+    {
+      "id": "fda_gilteritinib",
+      "kind": "fda_approval_page",
+      "drugs": [
+        "GILTERITINIB"
+      ],
+      "url": "https://www.fda.gov/drugs/fda-approves-gilteritinib-relapsed-or-refractory-acute-myeloid-leukemia-aml-flt3-mutation",
+      "partners": []
+    },
+    {
+      "id": "fda_ivosidenib",
+      "kind": "fda_approval_page",
+      "drugs": [
+        "IVOSIDENIB"
+      ],
+      "url": "https://www.fda.gov/drugs/resources-information-approved-drugs/fda-approves-ivosidenib-relapsed-or-refractory-acute-myeloid-leukemia",
+      "partners": []
+    },
+    {
+      "id": "fda_olutasidenib",
+      "kind": "fda_approval_page",
+      "drugs": [
+        "OLUTASIDENIB"
+      ],
+      "url": "https://www.fda.gov/drugs/resources-information-approved-drugs/fda-approves-olutasidenib-relapsed-or-refractory-acute-myeloid-leukemia-susceptible-idh1-mutation",
+      "partners": []
+    },
+    {
+      "id": "fda_enasidenib",
+      "kind": "fda_press_announcement",
+      "drugs": [
+        "ENASIDENIB"
+      ],
+      "url": "https://www.fda.gov/news-events/press-announcements/fda-approves-new-targeted-treatment-relapsed-or-refractory-acute-myeloid-leukemia",
+      "partners": []
+    },
+    {
+      "id": "fda_quizartinib",
+      "kind": "fda_approval_page",
+      "drugs": [
+        "QUIZARTINIB"
+      ],
+      "url": "https://www.fda.gov/drugs/drug-approvals-and-databases/fda-approves-quizartinib-newly-diagnosed-acute-myeloid-leukemia",
+      "partners": [
+        "CYTARABINE"
+      ]
+    },
+    {
+      "id": "fda_gemtuzumab",
+      "kind": "fda_approval_page",
+      "drugs": [
+        "GEMTUZUMAB OZOGAMICIN"
+      ],
+      "url": "https://www.fda.gov/drugs/resources-information-approved-drugs/fda-approves-gemtuzumab-ozogamicin-cd33-positive-aml",
+      "partners": [
+        "DAUNORUBICIN",
+        "CYTARABINE"
+      ]
+    },
+    {
+      "id": "fda_onureg",
+      "kind": "fda_approval_page",
+      "drugs": [
+        "AZACITIDINE"
+      ],
+      "url": "https://www.fda.gov/drugs/resources-information-approved-drugs/fda-approves-onureg-azacitidine-tablets-acute-myeloid-leukemia",
+      "partners": []
+    }
+  ],
+  "no_page_found_yet": [
+    "GLASDEGIB",
+    "MIDOSTAURIN",
+    "CPX-351 / Vyxeos",
+    "TAGRAXOFUSP",
+    "ARSENIC TRIOXIDE",
+    "TRETINOIN",
+    "SARGRAMOSTIM",
+    "HISTAMINE DIHYDROCHLORIDE"
+  ]
+}
