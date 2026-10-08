@@ -2182,12 +2182,36 @@ STANDARD_CHEMO_RX = re.compile(r"^\s*(standard|intensive|induction|consolidation
                                r"|^\s*standard of care\s*$|\b7\s*\+\s*3\b", re.I)
 
 
+def text_roots(text, di):
+    """Single-drug roots named anywhere in free text ('Ivosidenib combined with venetoclax and azacitidine'): exact index hits on 1-4 word n-grams."""
+    words = raw(text).split()
+    found = set()
+    for size in (4, 3, 2, 1):
+        for i in range(len(words) - size + 1):
+            g = " ".join(words[i:i + size])
+            if len(g) < 5:
+                continue
+            k, ids = di.lookup(g)
+            if k == "one":
+                found |= ids
+    return found
+
+
 def unlisted_partners(nct, croot, regimen_roots, arms, di, skip_roots):
-    """Drug-like interventions sharing an arm with this drug that are not in its regimen key (the key lists recognised scope drugs only)."""
+    """Drug-like interventions sharing an arm with this drug that are not in its regimen key (the key lists recognised scope drugs only).
+    A free-text intervention that names several drugs is scanned for known drug names, so its drugs count like separate interventions."""
     extra = set()
     for a in (arms.get(nct) or {}).values():
-        ids_by_name = {n: di.lookup(n) for t, n in a["ints"] if t in DRUG_LIKE and not re.search(r"placebo|supportive care", n, re.I)}
-        if not any(croot in ids for k, ids in ids_by_name.values() if k in ("one", "combo")):
+        ids_by_name = {}
+        for t, n in a["ints"]:
+            if t not in DRUG_LIKE or re.search(r"placebo|supportive care", n, re.I):
+                continue
+            k, ids = di.lookup(n)
+            if k not in ("one", "combo") and not STANDARD_CHEMO_RX.search(n):
+                ids = text_roots(n, di)
+                k = "text" if ids else k
+            ids_by_name[n] = (k, ids)
+        if not any(croot in ids for k, ids in ids_by_name.values() if k in ("one", "combo", "text")):
             continue
         for n, (k, ids) in ids_by_name.items():
             if STANDARD_CHEMO_RX.search(n):  # generic standard chemo counts as a listed partner
@@ -2195,6 +2219,8 @@ def unlisted_partners(nct, croot, regimen_roots, arms, di, skip_roots):
             if k in ("one", "combo"):
                 if ids - regimen_roots - skip_roots:
                     extra.add(n.strip())
+            elif k == "text":
+                extra |= {di.name.get(r, r).title() for r in ids - regimen_roots - skip_roots}
             else:
                 extra.add(n.strip())
     return sorted(extra)
@@ -2273,11 +2299,16 @@ def attach_semantic(tree, aact=None, di=None):
         kids, cid = [cnode], sid + ":central"
         # Regimen groups hang under the central trial: approved regimens (approval trials + companions, one subgroup per
         # FDA-approved regimen, dated by its first approval), then never-approved combinations, one subgroup per regimen.
-        appr, other_use = defaultdict(list), defaultdict(list)
+        appr, other_use, no_arms = defaultdict(list), defaultdict(list), []
         for rel in ("approval_lead", "approval_co_basis", "companion"):
             for p in groups.pop(rel, []):
                 key = p.get("approved_regimen") or p.get("regimen_key") or "?"
                 if rel == "companion" and di is not None:
+                    if not any(a["ints"] for a in (comp_arms.get(p["nct_id"]) or {}).values()):
+                        # No arm-to-intervention links in AACT: partner drugs cannot be checked, so the trial is not approval-regimen evidence.
+                        no_arms.append(dict(p, demoted_from_approved="arm composition not recorded in AACT"))
+                        fit_stats["no_arm_links"] += 1
+                        continue
                     reg_roots = set().union(*[di.lookup(x)[1] for x in key.split(" + ") if di.lookup(x)[0] in ("one", "combo")], {croot})
                     extra = unlisted_partners(p["nct_id"], croot, reg_roots, comp_arms, di, skip_roots)
                     if extra:
@@ -2318,6 +2349,12 @@ def attach_semantic(tree, aact=None, di=None):
                                attrs=dict(reason=k, studies=len(v), ncts=[p["nct_id"] for p in v]),
                                children=[study_node(f"{cid}:other_use:{i}", p) for p in sorted(v, key=rank, reverse=True)[:STUDY_GROUP_CAP]])
                           for i, (k, v) in enumerate(sorted(other_use.items(), key=lambda kv: -len(kv[1])))]))
+        if no_arms:
+            cnode["children"].append(dict(id=f"{cid}:no_arms", kind="study_set",
+                name=f"Same regimen, arm composition not recorded  ({len(no_arms)}{', top ' + str(STUDY_GROUP_CAP) if len(no_arms) > STUDY_GROUP_CAP else ''})",
+                attrs=dict(note="Companion trials of an approved regimen whose AACT record links no interventions to arms, so partner drugs "
+                                "cannot be checked. Not approval evidence; kept for context.", studies=len(no_arms), ncts=[p["nct_id"] for p in no_arms]),
+                children=[study_node(f"{cid}:no_arms", p) for p in sorted(no_arms, key=rank, reverse=True)[:STUDY_GROUP_CAP]]))
         g = sorted(groups.pop("investigational_combination", []), key=rank, reverse=True)
         if g:
             by_reg = defaultdict(list)
