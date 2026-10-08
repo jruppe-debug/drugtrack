@@ -105,6 +105,15 @@ def save(out, path):
 
 def run():
     m = json.load(open(os.path.join(DATA, "match.json"), encoding="utf-8"))
+    # Trials named in the AML part of each approval's label section 14 (tools/label_s14.py, which reads this file's
+    # events, so it is available from the second pass on). A label can also cite trials of other indications (the
+    # 2026 Inqovi label cites MDS trial ASTX727-02 next to AML trial ASTX727-07); those must not become the AML lead.
+    s14_path = os.path.join(DATA, "label_s14.json")
+    s14_aml = {}
+    if os.path.exists(s14_path):
+        for d, v in json.load(open(s14_path, encoding="utf-8"))["drugs"].items():
+            for ev in v["events"]:
+                s14_aml[(d, ev["application"], ev["date"])] = {n for st in ev["studies"] for n in st["ncts"]}
     terms = drug_terms(m["drugs"])
     by_drug = defaultdict(list)
     for p in m["pairs"]:
@@ -235,14 +244,19 @@ def run():
                 checks.append("no registry start date")
             elif p["start_date"] >= e["date"]:
                 checks.append(f"trial starts {p['start_date']}, on/after approval {e['date']}")
+            s14_named = s14_aml.get((drug, e["application"], e["date"]))
+            if s14_named and nct not in s14_named:
+                checks.append("not named in the AML part of label section 14")
             anchors.append(dict(nct=nct, approval_date=e["date"], application=e["application"], submission=e["submission"], kind=e["kind"],
                                 sources=h["sources"], ids=h["ids"], phase=p["phase"], start_date=p.get("start_date"), status=p["status"],
                                 layer=p.get("layer"), decision=p["decision"], approved_regimen_key=" + ".join(sorted({drug, *partners})),
                                 regimen_type=rtype, registered_regimen_key=p["regimen_key"],
                                 validation="needs_review" if checks else "verified", checks=checks,
                                 snippet=re.sub(r"\s+", " ", h["ctx"][0])[:600] if h["ctx"] else None))
-        # Within one approval the lead is the highest phase, then earliest start; the rest are co-basis.
-        anchors.sort(key=lambda a: (a["approval_date"], -PHASE_RANK.get(a["phase"] or "", -1), a["start_date"] or "9999", a["nct"]))
+        # Within one approval the lead is a trial named in the AML part of section 14, then the highest phase, then the
+        # earliest start; the rest are co-basis.
+        anchors.sort(key=lambda a: (a["approval_date"], a["validation"] != "verified", -PHASE_RANK.get(a["phase"] or "", -1),
+                                    a["start_date"] or "9999", a["nct"]))
         seen_ev = set()
         for a in anchors:
             k = (a["application"], a["approval_date"])

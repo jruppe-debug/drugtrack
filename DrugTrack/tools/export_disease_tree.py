@@ -2325,11 +2325,15 @@ def attach_semantic(tree, aact=None, di=None):
                         continue
                     fit_stats["kept"] += 1
                 appr[key].append(p)
+        if fda:
+            # The central trial is an approval trial too: list it first, so a drug whose only approval trial is the central one
+            # (glasdegib, NCT01546038) still shows its approved regimen.
+            appr[central.get("approved_regimen") or central["regimen_key"]].insert(0, central)
         first = {k: min((p["approval_basis"]["approval_date"] for p in v if p.get("approval_basis")), default=None) for k, v in appr.items()}
         if fda:
             first.setdefault(central.get("approved_regimen"), fda["approval_date"])
             first[central.get("approved_regimen")] = min(filter(None, [first[central.get("approved_regimen")], fda["approval_date"]]))
-        rel_rank = {"approval_lead": 0, "approval_co_basis": 1, "companion": 2}
+        rel_rank = {"central": -1, "approval_lead": 0, "approval_co_basis": 1, "companion": 2}
         cnode["children"] = []
         if appr:
             cnode["children"].append(dict(id=f"{cid}:approved", kind="study_set", name=f"Approved regimens  ({sum(map(len, appr.values()))} trials, {len(appr)} regimens)",
