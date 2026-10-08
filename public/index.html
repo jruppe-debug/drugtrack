@@ -1,0 +1,447 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>DrugTrack Viewer</title>
+<script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0; background: #0f1117; color: #e6e6e6; }
+  header { padding: 16px 24px; border-bottom: 1px solid #2a2d3a; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+  h1 { font-size: 18px; margin: 0; }
+  .btns { display: flex; gap: 8px; }
+  button { background: #2a2d3a; color: #e6e6e6; border: 1px solid #3a3d4a; border-radius: 6px; padding: 8px 14px; cursor: pointer; font-size: 13px; }
+  button:hover { background: #3a3d4a; }
+  button.active { background: #3a5d7a; border-color: #5a8dbf; }
+  main { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 380px); gap: 0; height: calc(100vh - 57px); }
+  #tree-wrap { border-right: 1px solid #2a2d3a; overflow: hidden; position: relative; min-width: 0; }
+  aside { padding: 16px 20px; overflow-y: auto; min-width: 0; }
+  section { margin-bottom: 24px; }
+  h2 { font-size: 13px; text-transform: uppercase; color: #8a8fa3; margin: 0 0 8px; letter-spacing: 0.05em; }
+  .summary { font-size: 13px; line-height: 1.5; color: #c9cbd6; white-space: pre-wrap; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th, td { text-align: left; padding: 4px 6px; border-bottom: 1px solid #22242e; }
+  th { color: #8a8fa3; font-weight: 500; }
+  .empty { color: #6a6d7a; font-style: italic; font-size: 13px; }
+  .legend { font-size: 11px; color: #8a8fa3; padding: 8px 24px; border-top: 1px solid #2a2d3a; display: flex; gap: 16px; flex-wrap: wrap; }
+  .legend span { display: inline-flex; align-items: center; gap: 5px; }
+  .legend i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+  .node text { fill: #c9cbd6; font-size: 11px; }
+  .node circle { stroke: #0f1117; stroke-width: 2px; cursor: pointer; }
+  .link { fill: none; stroke: #3a3d4a; stroke-width: 1.5px; }
+  #detail-panel { position: absolute; top: 10px; right: 10px; width: 260px; background: #1a1c26; border: 1px solid #3a3d4a; border-radius: 8px; padding: 12px; font-size: 12px; display: none; }
+  #detail-panel h3 { margin: 0 0 8px; font-size: 13px; }
+  #detail-panel dt { color: #8a8fa3; margin-top: 6px; }
+  #detail-panel dd { margin: 0; color: #e6e6e6; word-break: break-all; }
+  #debug-panel { display: none; font-family: ui-monospace, monospace; font-size: 11px; background: #05060a; border: 1px solid #2a2d3a; border-radius: 6px; padding: 10px; max-height: 220px; overflow-y: auto; white-space: pre-wrap; }
+  .pulse { animation: pulse 1s ease-in-out; }
+  @keyframes pulse { 0% { opacity: 0.4; } 100% { opacity: 1; } }
+  @media (max-width: 700px) {
+    main { grid-template-columns: 1fr; height: auto; }
+    #tree-wrap { border-right: none; border-bottom: 1px solid #2a2d3a; height: 60vh; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>DrugTrack Viewer</h1>
+  <div class="btns">
+    <button id="debugBtn" onclick="toggleDebug()">Debug</button>
+    <button onclick="loadAll()">Refresh now</button>
+  </div>
+</header>
+<main>
+  <div id="tree-wrap">
+    <svg id="tree"></svg>
+    <div id="detail-panel"><h3 id="dp-title"></h3><dl id="dp-body"></dl></div>
+  </div>
+  <aside>
+    <section>
+      <h2>Summary</h2>
+      <div id="summary" class="summary empty">Loading…</div>
+    </section>
+    <section>
+      <h2>Process critique</h2>
+      <div id="critique" class="summary empty">No critique yet.</div>
+    </section>
+    <section>
+      <h2>Validation layer</h2>
+      <div id="validationHeader" class="summary empty">No validation data yet.</div>
+      <table id="validationTable"><thead><tr><th>Source</th><th>Identifier</th><th>Type</th><th>Name</th><th>Conf.</th></tr></thead><tbody></tbody></table>
+    </section>
+    <section>
+      <h2>Debug</h2>
+      <div id="debug-panel"></div>
+    </section>
+  </aside>
+</main>
+<div class="legend">
+  <span><i style="background:#7dffb8"></i> high confidence</span>
+  <span><i style="background:#ffcf7d"></i> medium</span>
+  <span><i style="background:#ff9d7d"></i> low</span>
+  <span><i style="background:#6a6d7a"></i> no identifier</span>
+  <span><i style="background:#7db9ff"></i> query root</span>
+  <span>Click a node to expand/collapse and see details. Drag to pan, scroll to zoom.</span>
+</div>
+<script>
+let debugLog = [];
+let debugVisible = false;
+let currentZoom = null;
+
+function log(msg) {
+  const line = `[${new Date().toLocaleTimeString()}] ${msg}`;
+  debugLog.unshift(line);
+  debugLog = debugLog.slice(0, 60);
+  if (debugVisible) document.getElementById('debug-panel').textContent = debugLog.join('\n');
+}
+
+function toggleDebug() {
+  debugVisible = !debugVisible;
+  document.getElementById('debug-panel').style.display = debugVisible ? 'block' : 'none';
+  document.getElementById('debugBtn').classList.toggle('active', debugVisible);
+  if (debugVisible) document.getElementById('debug-panel').textContent = debugLog.join('\n');
+}
+
+async function loadAll() {
+  const t0 = performance.now();
+  try {
+    const graphRes = await fetch('/api/graph');
+    const graph = await graphRes.json();
+    log(`GET /api/graph -> ${graphRes.status} (${graph.entities?.length ?? 0} entities, ${graph.edges?.length ?? 0} edges) in ${Math.round(performance.now() - t0)}ms`);
+    if (!drugLit) {  // static file from tools/drug_lit.py - fetched once, not every refresh
+      drugLit = await (await fetch('/api/drug-lit')).json();
+      log(`GET /api/drug-lit -> available=${drugLit.available}${drugLit.available ? ', articles ' + drugLit.summary.article_index_value + ', NCT ' + drugLit.summary.nct_index_value : ''}`);
+    }
+    renderTree(graph);
+
+    const manifest = await (await fetch('/api/manifest')).json();
+    log(`GET /api/manifest -> available=${manifest.available}`);
+    renderSummary(manifest);
+
+    const critiqueRes = await (await fetch('/api/critique')).json();
+    log(`GET /api/critique -> available=${critiqueRes.available}`);
+    renderCritique(critiqueRes);
+  } catch (err) {
+    log(`ERROR during loadAll: ${err.message}`);
+  }
+}
+
+function renderSummary(manifest) {
+  const summaryEl = document.getElementById('summary');
+  const validationHeader = document.getElementById('validationHeader');
+  const validationBody = document.querySelector('#validationTable tbody');
+
+  if (manifest.available) {
+    summaryEl.textContent = manifest.summary || '(empty summary)';
+    summaryEl.classList.remove('empty');
+  } else {
+    summaryEl.textContent = 'No manifest yet (uiVis has not succeeded in a run) — the tree still reflects live data.';
+    summaryEl.classList.add('empty');
+  }
+
+  if (manifest.available && manifest.validation) {
+    const v = manifest.validation;
+    validationHeader.classList.remove('empty');
+    validationHeader.textContent =
+      `${v.sourcesWithIdentifier}/${v.sourcesTotal} sources produced a real identifier. Name agreement: ${v.nameAgreement}.` +
+      (v.notes.length ? ` Notes: ${v.notes.join('; ')}` : '');
+    validationBody.innerHTML = v.rows.map(r =>
+      `<tr><td>${escapeHtml(r.source)}</td><td>${escapeHtml(r.identifier ?? '—')}</td>` +
+      `<td>${escapeHtml(r.identifierType ?? '—')}</td><td>${escapeHtml(r.matchedName ?? '—')}</td>` +
+      `<td>${escapeHtml(r.confidence ?? '—')}</td></tr>`
+    ).join('') || '<tr><td colspan="5" class="empty">none</td></tr>';
+  } else {
+    validationHeader.classList.add('empty');
+    validationHeader.textContent = 'No validation summary yet.';
+    validationBody.innerHTML = '';
+  }
+}
+
+function renderCritique(c) {
+  const el = document.getElementById('critique');
+  if (c.available) {
+    el.textContent = c.critique;
+    el.classList.remove('empty');
+  } else {
+    el.textContent = 'No critique yet — runs after a full pipeline execution finishes.';
+    el.classList.add('empty');
+  }
+}
+
+/**
+ * Real D3 collapsible-tree mechanism (children/_children toggle + update()
+ * transitions), the canonical pattern from the Mike Bostock/d3noob
+ * reference implementation, adapted to this project's data. Plus d3.zoom()
+ * for pan/zoom and a click-for-details side panel.
+ */
+let treeRoot = null;
+let collapsedIds = new Set();
+let gGroup = null; // persistent across renders - only created once, so
+                    // zoom/pan state and in-flight transitions survive
+                    // the 4s auto-refresh instead of resetting every time.
+
+function ensureSvgSetup() {
+  if (gGroup) return gGroup;
+  const svg = d3.select('#tree');
+  const g = svg.append('g').attr('transform', 'translate(140,20)');
+  const zoom = d3.zoom().scaleExtent([0.3, 3]).on('zoom', (event) => {
+    g.attr('transform', event.transform);
+  });
+  svg.call(zoom);
+  currentZoom = zoom;
+  gGroup = g;
+  return g;
+}
+
+function renderTree(graph) {
+  const container = document.getElementById('tree-wrap');
+  const svgEl = d3.select('#tree');
+  const entities = graph.entities || [];
+  const edges = graph.edges || [];
+  const roots = entities.filter(e => e.source === 'user-query');
+
+  const width = Math.max(container.clientWidth, 700);
+  const height = Math.max(container.clientHeight, 500);
+  svgEl.attr('width', width).attr('height', height);
+
+  if (roots.length === 0) {
+    svgEl.selectAll('g').remove();
+    gGroup = null;
+    svgEl.append('text').attr('x', 20).attr('y', 40).attr('fill', '#6a6d7a')
+      .text('No entities yet. Run the pipeline - this updates automatically.');
+    return;
+  }
+
+  const byId = Object.fromEntries(entities.map(e => [e.id, e]));
+  const childrenOf = id => edges.filter(e => e.from === id).map(e => byId[e.to]).filter(Boolean);
+
+  const data = {
+    name: 'DrugTrack', id: '__root__', isSuperRoot: true,
+    children: roots.map(r => ({
+      name: r.name, id: r.id, entity: r,
+      children: childrenOf(r.id).map(c => ({ name: c.source, id: c.id, entity: c }))
+        .concat(litBranch(r.name)),
+    })),
+  };
+
+  const g = ensureSvgSetup();
+
+  // Preserve x0/y0 (transition source positions) and open/closed state of
+  // any node that already existed, by id, across this data refresh - this
+  // is what makes updates smooth instead of every node re-entering from
+  // scratch every 4 seconds.
+  const previous = treeRoot ? new Map(treeRoot.descendants().map(d => [d.data.id, d])) : new Map();
+
+  treeRoot = d3.hierarchy(data);
+  treeRoot.each(d => {
+    const prev = previous.get(d.data.id);
+    if (!prev && d.data.startCollapsed) collapsedIds.add(d.data.id);
+    d.x0 = prev ? prev.x0 ?? prev.x : height / 2;
+    d.y0 = prev ? prev.y0 ?? prev.y : 0;
+    const wasCollapsed = prev ? previous.has(d.data.id) && collapsedIds.has(d.data.id) : false;
+    if ((wasCollapsed || collapsedIds.has(d.data.id)) && d.children) {
+      d._children = d.children;
+      d.children = null;
+    }
+  });
+  if (treeRoot.x0 === undefined) { treeRoot.x0 = height / 2; treeRoot.y0 = 0; }
+
+  update(treeRoot, g);
+}
+
+function update(source, g) {
+  // Grow vertically with visible leaves so an expanded literature branch stays readable.
+  const leaves = treeRoot.leaves().length;
+  const treeLayout = d3.tree().size([Math.max(400, (document.getElementById('tree-wrap').clientHeight || 500) - 40, leaves * 16), 700]);
+  const treeData = treeLayout(treeRoot);
+  const nodes = treeData.descendants();
+  const links = treeData.links();
+
+  const link = g.selectAll('.link').data(links, d => d.target.data.id);
+  link.join('path')
+    .attr('class', 'link')
+    .attr('d', d3.linkHorizontal().x(d => d.y).y(d => d.x));
+
+  const node = g.selectAll('.node').data(nodes, d => d.data.id);
+
+  const nodeEnter = node.enter().append('g')
+    .attr('class', 'node')
+    .attr('transform', d => `translate(${d.y0 ?? source.y0 ?? d.y},${d.x0 ?? source.x0 ?? d.x})`)
+    .on('click', (event, d) => {
+      if (d.children || d._children) toggleCollapse(d, g);
+      showDetails(d);
+    });
+
+  nodeEnter.append('circle')
+    .attr('r', d => d.data.isSuperRoot ? 8 : d.depth === 1 ? 10 : 7)
+    .attr('fill', d => colorForNode(d.data))
+    .attr('stroke', d => d._children ? '#fff' : '#0f1117');
+
+  nodeEnter.append('text')
+    .attr('dy', '0.32em')
+    .attr('x', d => (d.children || d._children ? -14 : 14))
+    .attr('text-anchor', d => (d.children || d._children ? 'end' : 'start'))
+    .text(d => truncateLabel(d.data));
+
+  const merged = nodeEnter.merge(node);
+  merged.transition().duration(400)
+    .attr('transform', d => `translate(${d.y},${d.x})`);
+  merged.select('circle')
+    .attr('fill', d => colorForNode(d.data))
+    .attr('stroke', d => d._children ? '#fff' : '#0f1117');
+
+  node.exit().transition().duration(300)
+    .attr('transform', d => `translate(${source.y},${source.x})`)
+    .remove();
+
+  nodes.forEach(d => { d.x0 = d.x; d.y0 = d.y; });
+}
+
+function toggleCollapse(d, g) {
+  if (d.children) {
+    d._children = d.children;
+    d.children = null;
+    collapsedIds.add(d.data.id);
+  } else if (d._children) {
+    d.children = d._children;
+    d._children = null;
+    collapsedIds.delete(d.data.id);
+  }
+  update(treeRoot, g);
+}
+
+/**
+ * Indication branch: one node per Open Targets indication of the drug, each with two
+ * independent children - the NCT branch (AACT-confirmed NCT IDs) and the article-support
+ * branch (PubMed articles NLM-indexed with the drug MeSH + indication MeSH headings).
+ * Articles are tagged to the drug-indication pair, never to a trial. Built from
+ * /api/drug-lit (tools/drug_lit.py); no text matching creates a link.
+ */
+let drugLit = null;
+
+function litBranch(drugName) {
+  if (!drugLit?.available || drugLit.summary.drug !== String(drugName).toLowerCase()) return [];
+  const s = drugLit.summary;
+  return [{
+    name: `indications · ${s.indications}`, id: '__ind__', startCollapsed: true, lit: { kind: 'summary', s },
+    children: drugLit.indications.map(ind => {
+      const key = `ind:${ind.disease_id}`, art = ind.articles;
+      return {
+        name: `${ind.approved ? '✓ ' : ''}${ind.name}`, id: key, startCollapsed: true, lit: { kind: 'indication', ind },
+        children: [
+          {
+            name: `NCT · ${ind.ncts.length}`, id: `${key}:nct`, startCollapsed: true, lit: { kind: 'nctBranch', ind },
+            children: ind.ncts.map(t => ({ name: t.nct_id, id: `${key}:nct:${t.nct_id}`, lit: { kind: 'nct', t, ind } })),
+          },
+          {
+            name: `articles · ${art ? art.total : 'no MeSH'}`, id: `${key}:art`, startCollapsed: true,
+            lit: { kind: 'artBranch', ind },
+            children: (art?.sample || []).map(a => ({
+              name: `${a.tier} · ${a.year} ${a.journal}`, id: `${key}:art:${a.pmid}`, lit: { kind: 'article', a, ind },
+            })),
+          },
+        ],
+      };
+    }),
+  }];
+}
+
+function showLitDetails(lit) {
+  const row = ([k, v]) => `<dt>${escapeHtml(k)}</dt><dd>${v}</dd>`;
+  const link = (url, text) => `<a href="${escapeHtml(url)}" target="_blank" rel="noopener">${escapeHtml(text)}</a>`;
+  const esc = rows => rows.map(([k, v]) => [k, escapeHtml(String(v))]);
+  const ind = lit.ind, art = ind?.articles;
+  let title, rows;
+  if (lit.kind === 'summary') {
+    const s = lit.s;
+    title = `Indications · ${s.drug}`;
+    rows = esc([
+      ['Indications (Open Targets)', `${s.indications} (${s.approved} approved)`],
+      ['Drug MeSH', s.drug_mesh], ['Indication MeSH-tagged', `${s.mesh_tagged}/${s.indications}`],
+      ['MeSH mapping', Object.entries(s.mesh_methods).map(([k, v]) => `${k}: ${v}`).join('; ')],
+      ['With ≥1 article', s.article_index_value], ['With ≥1 NCT', s.nct_index_value],
+      ['Both branches', s.both_branches], ['Articles only', s.article_only], ['NCT only', s.nct_only],
+      ['Method', 'Articles: PubMed "drug"[Majr] AND "indication"[Mesh]. NCT: AACT-confirmed Open Targets reports. Independent joins.'],
+    ]);
+  } else if (lit.kind === 'indication' || lit.kind === 'artBranch' || lit.kind === 'nctBranch') {
+    title = ind.name;
+    const mesh = Object.entries(ind.mesh.descriptors).map(([u, h]) => `${h} (${u})`).join('; ');
+    const cands = Object.entries(ind.mesh.candidates || {}).map(([u, h]) => `${h} (${u})`).join('; ');
+    rows = esc([
+      ['Disease ID', ind.disease_id], ['Approved', ind.approved ? 'yes' : 'no'],
+      ['Max clinical stage', ind.max_clinical_stage ?? '—'], ['NCT trials (AACT-confirmed)', ind.ncts.length],
+      ['MeSH heading', mesh || '—'], ['MeSH mapping', ind.mesh.method],
+      ...(cands ? [['Ambiguous candidates', cands]] : []),
+      ...(art ? [
+        ['Articles (drug as major topic)', art.total], ['Articles (drug any MeSH)', art.total_drug_any_mesh],
+        ['Meta-analyses', art.by_pubtype.meta_analysis], ['Systematic reviews', art.by_pubtype.systematic_review],
+        ['RCTs', art.by_pubtype.rct], ['Clinical trials', art.by_pubtype.clinical_trial],
+        ['Reviews', art.by_pubtype.review], ['Sample shown', art.sample.length],
+      ] : []),
+    ]);
+    if (art) rows.push(['PubMed query', link(art.pubmed_url, art.query)]);
+  } else if (lit.kind === 'nct') {
+    const t = lit.t;
+    title = t.title || t.nct_id;
+    rows = [
+      ...esc([['Indication', ind.name], ['Phase', t.phase ?? '—'], ['Status', t.status ?? '—']]),
+      ['ClinicalTrials.gov', link(t.url, t.nct_id)],
+    ];
+  } else {
+    const a = lit.a;
+    title = a.title || `PMID ${a.pmid}`;
+    rows = [
+      ...esc([['Indication', ind.name], ['Journal', `${a.journal} (${a.year})`], ['Sampled as', a.tier],
+        ['Publication type', (a.pubtypes || []).join('; ') || '—'], ['Tagged by', art.query]]),
+      ['PubMed', link(a.url, a.pmid)],
+    ];
+  }
+  document.getElementById('dp-title').textContent = title;
+  document.getElementById('dp-body').innerHTML = rows.map(row).join('');
+  document.getElementById('detail-panel').style.display = 'block';
+}
+
+function showDetails(d) {
+  const panel = document.getElementById('detail-panel');
+  if (d.data.lit) { showLitDetails(d.data.lit); return; }
+  const e = d.data.entity;
+  if (!e) { panel.style.display = 'none'; return; }
+  document.getElementById('dp-title').textContent = e.name;
+  document.getElementById('dp-body').innerHTML = [
+    ['Source', e.source], ['Type', e.type],
+    ['Identifier', e.identifier ?? '—'], ['Identifier type', e.identifierType ?? '—'],
+    ['Confidence', e.confidence ?? '—'], ['Entity ID', e.id],
+  ].map(([k, v]) => `<dt>${escapeHtml(k)}</dt><dd>${escapeHtml(String(v))}</dd>`).join('');
+  panel.style.display = 'block';
+}
+
+function colorForNode(d) {
+  if (d.isSuperRoot) return '#4a4d5a';
+  if (d.lit) {
+    const k = d.lit.kind;
+    if (k === 'article' || k === 'artBranch') return '#c49dff';  // article-support branch: purple
+    if (k === 'nct' || k === 'nctBranch') return '#7db9ff';      // NCT branch: blue
+    if (k === 'indication') return d.lit.ind.approved ? '#7dffb8' : '#ffcf7d';
+    return '#6a6d7a';
+  }
+  if (!d.entity) return '#7db9ff';
+  if (d.entity.source === 'user-query') return '#7db9ff';
+  const conf = d.entity.confidence;
+  if (conf === 'high') return '#7dffb8';
+  if (conf === 'medium') return '#ffcf7d';
+  if (conf === 'low') return '#ff9d7d';
+  return '#6a6d7a';
+}
+
+function truncateLabel(d) {
+  const label = d.entity ? `${d.entity.source}${d.entity.identifier ? ' · ' + d.entity.identifier : ''}` : d.name;
+  return label.length > 30 ? label.slice(0, 30) + '…' : label;
+}
+
+function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+log('Viewer initialized.');
+loadAll();
+setInterval(loadAll, 4000);
+</script>
+</body>
+</html>

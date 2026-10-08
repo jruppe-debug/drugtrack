@@ -1,0 +1,641 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DrugTrack - Disease Tree</title>
+<script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+<style>
+  :root { --bg:#0f1117; --panel:#151822; --line:#2a2d3a; --ink:#e6e6e6; --dim:#8a8fa3; --ok:#6ee7a8; --warn:#ffcf7d; --bad:#ff8a7a; --acc:#7db9ff; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, sans-serif; background:var(--bg); color:var(--ink); }
+  header { padding:12px 20px; border-bottom:1px solid var(--line); display:flex; gap:16px; align-items:center; flex-wrap:wrap; }
+  header h1 { font-size:16px; margin:0; }
+  header a { color:var(--acc); font-size:13px; text-decoration:none; }
+  #meta { color:var(--dim); font-size:12px; flex:1; min-width:240px; }
+  input[type=search] { background:#1b1e2b; color:var(--ink); border:1px solid #3a3d4a; border-radius:6px; padding:7px 10px; width:220px; }
+  button { background:#2a2d3a; color:var(--ink); border:1px solid #3a3d4a; border-radius:6px; padding:7px 12px; cursor:pointer; font-size:13px; }
+  button:hover { background:#3a3d4a; }
+  main { display:grid; grid-template-columns:minmax(0,1fr) minmax(300px,400px); height:calc(100vh - 58px); }
+  #wrap { overflow:hidden; border-right:1px solid var(--line); position:relative; }
+  svg { width:100%; height:100%; display:block; cursor:grab; }
+  aside { overflow-y:auto; padding:14px 16px; }
+  section { margin-bottom:18px; }
+  h2 { font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--dim); margin:0 0 8px; }
+  .inv { font-size:12px; padding:5px 8px; border-radius:5px; margin-bottom:4px; background:var(--panel); border-left:3px solid var(--ok); }
+  .inv.fail { border-left-color:var(--bad); }
+  .inv .d { color:var(--dim); display:block; margin-top:2px; word-break:break-word; }
+  .kv { font-size:12px; display:grid; grid-template-columns:120px 1fr; gap:3px 8px; }
+  .kv dt { color:var(--dim); } .kv dd { margin:0; word-break:break-word; }
+  .flagbox { background:#2b2413; border:1px solid #6b5520; border-radius:6px; padding:8px 10px; font-size:12px; margin:8px 0; }
+  .pill { display:inline-block; border:1px solid var(--acc); border-radius:10px; padding:0 6px; margin:2px 0; font-size:11px; }
+  .snippet { background:var(--panel); border-radius:6px; padding:8px 10px; font-size:12px; color:#c9cbd6; margin-top:6px; }
+  .legend { display:flex; flex-wrap:wrap; gap:6px 14px; font-size:11px; color:var(--dim); }
+  .legend i { display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:5px; vertical-align:middle; }
+  .link { fill:none; stroke:#343849; stroke-width:1.2px; }
+  .node circle { stroke:#0f1117; stroke-width:2px; cursor:pointer; }
+  .node circle.hit { cursor:pointer; }
+  .node text { fill:#d5d7e0; font-size:11px; pointer-events:none; }
+  .node.match text { fill:#fff; font-weight:700; }
+  .node.match circle { stroke:#fff; stroke-width:3px; }
+  .mono { font-family: ui-monospace, monospace; }
+  @media (max-width:800px){ main{ grid-template-columns:1fr; height:auto; } #wrap{ height:65vh; border-right:none; border-bottom:1px solid var(--line);} }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title">Disease tree</h1>
+  <div id="meta">Loading...</div>
+  <input id="q" type="search" placeholder="Drug, brand, NCT or tag (e.g. venetoclax, maintenance)" />
+  <span id="hits" style="color:var(--dim);font-size:12px"></span>
+  <button id="fit">Fit</button>
+  <button id="expand">Expand all</button>
+  <button id="collapse">Collapse</button>
+  <a href="/">Pipeline graph</a>
+  <a href="/api/tree" target="_blank">tree.json</a>
+</header>
+<main>
+  <div id="wrap"><svg id="svg"></svg></div>
+  <aside>
+    <section>
+      <h2>Selected node</h2>
+      <div id="detail" style="font-size:12px;color:var(--dim)">Click a node. Drug nodes show the Open Targets stage, the FDA-label evidence, and where the data came from.</div>
+    </section>
+    <section>
+      <h2>Invariants &amp; golden test</h2>
+      <div id="inv"></div>
+    </section>
+    <section>
+      <h2>Counts</h2>
+      <dl class="kv" id="counts"></dl>
+    </section>
+    <section>
+      <h2>Data fidelity (before &rarr; now)</h2>
+      <div id="fid" style="font-size:12px"></div>
+    </section>
+    <section>
+      <h2>Legend</h2>
+      <div class="legend">
+        <span><i style="background:#6ee7a8"></i>approved at node (US evidence) / approved regimen ✓</span>
+        <span><i style="background:#a3e635"></i>approved at node, non-US only</span>
+        <span><i style="background:#f5c26b"></i>approved at BROADER term</span>
+        <span><i style="background:#ff9d7d"></i>label-only (OT missing)</span>
+        <span><i style="background:#7db9ff"></i>investigational P3 / P2-3</span>
+        <span><i style="background:#9aa6d8"></i>investigational P2</span>
+        <span><i style="background:#6e7391"></i>investigational P1 / early</span>
+        <span><i style="background:#8ea0ff"></i>regimen: investigational</span>
+        <span><i style="background:#2dd4bf"></i>regimen: approved backbone + add-on ✓+</span>
+        <span><i style="background:#3fd0b0"></i>trial: active</span>
+        <span><i style="background:#555a70"></i>trial: other / audit</span>
+      </div>
+    </section>
+    <section>
+      <h2>Categorization rules (as executed)</h2>
+      <ol id="rules" style="font-size:11px;color:var(--dim);padding-left:16px;margin:0"></ol>
+    </section>
+  </aside>
+</main>
+<script>
+const CAT_TEXT = {
+  APPROVED_AT_SCOPE: "US-approved for this disease: the current US label names it as a treatment indication AND an FDA approval letter names it. Other regulators appear only as reference jurisdictions.",
+  SUPPLEMENTAL: "Not an approved drug for this network: backbone chemotherapy (e.g. 7+3 components), a supportive/conditioning agent, or a partner in a US-approved regimen. Shown only as part of approved-drug regimens.",
+  APPROVED_BROADER_TERM: "The approval is recorded on a BROADER ancestor term (see approval evidence), not on this disease node. Check the jurisdiction: an EU 'myeloid leukemia' approval is not a US AML label.",
+  LABEL_ONLY: "Open Targets has no approval evidence here, but the CURRENT US label text (live openFDA) names this disease. Source gap - shown for review, not auto-promoted.",
+  INVESTIGATIONAL: "No approval evidence at this node, on a near ancestor term, or in a live US label.",
+  NOT_IN_OT_SCOPE_SET: "Found by parsing trial arms in AACT, but Open Targets does not list this drug at this disease node.",
+  APPROVED_REGIMEN_US_LABEL: "This exact drug combination matches a clause in a current US label (sentence shown below).",
+  APPROVED_BACKBONE_PLUS_INVESTIGATIONAL: "Contains a label-approved regimen PLUS extra drug(s): an approved backbone with an investigational add-on.",
+  APPROVED_DRUG_ADDON_UNVERIFIED: "Contains a label-approved regimen PLUS a drug AACT links to the arm but never names in the arm's own title/description (often a multi-cohort arm or co-medication) - not treated as a verified combination.",
+  APPROVED_BACKBONE_PLUS_DISPUTED_ADDON: "Contains a label-approved regimen PLUS a drug that an independent reference source (FDA/manufacturer page, keyword-searched) explicitly does not mention as part of the regimen - flagged, not presented as approved.",
+  INVESTIGATIONAL_REGIMEN: "No current US label clause matches this drug combination.",
+  STANDARD_OF_CARE: "Established regimen of long-approved agents; no FDA label section 14 trial for this use.",
+  UNRESOLVED_COMPONENT: "At least one intervention string could not be resolved to a single Open Targets drug (shown, never dropped)."
+};
+const ATTR_SKIP = new Set(['label', 'label_npm1', 'approval_evidence', 'all_trial_ids', 'members', 'tree_nodes', 'arms', 'comparator_arms', 'approved_as_partner_in', 'drugs', 'unmapped_components', 'ncts', 'component_mechanisms',
+  'brands', 'development_timeline', 'trials', 'link_evidence', 'us_approval_scope_labeled', 'first_us_approval', 'label_expansion_candidates', 'us_first_approval_by_drug', 'approval_date_note', 'brand_basis',
+  'reference_pages', 'reference_claims', 'mechanism_targets', 'mutation_group_basis', 'fidelity', 'outside_sources', 'approval_letters', 'scope_indication_first_letter', 'therapeutic_role', 'ema_indications', 'scope_named_by', 'tags', 'tag_basis', 'approved_for', 'investigated_for', 'approval_lineage', 'lineage_ref']);
+const PH = p => ({EARLY_PHASE1:'Ph0/1',PHASE1:'Ph1','PHASE1/PHASE2':'Ph1/2',PHASE2:'Ph2','PHASE2/PHASE3':'Ph2/3',PHASE3:'Ph3',PHASE4:'Ph4'}[p] || 'Ph n/a');
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+function renderCitations(citations) {
+  if (!Array.isArray(citations) || !citations.length) return '';
+  return '<br><span style="color:var(--dim)">sources (GtoPdb-curated, PubMed):</span> ' +
+    citations.map(c => (c.urls || []).map((u, i) => {
+      const pmid = c.pmids[i], meta = LIT_VALIDATED[pmid];
+      const label = meta && meta.title ? esc(meta.title) : 'PMID ' + esc(pmid);
+      return `<a href="${esc(u)}" target="_blank" style="color:var(--acc)" title="${esc(c.symbol)} ${esc(c.target)}">${label}</a>`;
+    }).join(', ')).join(', ');
+}
+
+let root, g, zoom, svg, treeData;
+const W = () => document.getElementById('wrap').clientWidth;
+const H = () => document.getElementById('wrap').clientHeight;
+// _full: a node opened in lineage focus mode shows only its linked children; _full keeps the rest.
+const kids = d => d._full || d.children || d._children || [];
+
+function colorFor(d) {
+  const a = d.data.attrs || {}, k = d.data.kind;
+  if (k === 'root') return '#4a4d5a';
+  if (k === 'branch') return '#c084fc';
+  if (k === 'stage') return '#5b6bd0';
+  if (k === 'note') return '#555a70';
+  if (k === 'study_set') return '#f472b6';
+  if (k === 'grave') return '#7a4a4a';
+  if (k === 'study' && a.expansion) return '#94a3b8';
+  if (k === 'study') return a.relation === 'central' ? '#facc15' : ({ safety: '#fb923c', long_term: '#a78bfa', pk: '#60a5fa', basket: '#94a3b8', transplant: '#64748b' }[a.relation] || (ACTIVE.has(a.status) ? '#3fd0b0' : '#7dd3c0'));
+  if (k === 'lit' || k === 'article') return a.scope_mesh_tagged === false ? '#8a7a66' : '#f0a868';
+  if (k === 'program') return a.link_basis === 'explicit' ? '#e879f9' : '#c9a7ff';
+  if (k === 'trial') return ACTIVE.has(a.status) ? '#3fd0b0' : '#555a70';
+  if (k === 'regimen') return { APPROVED_REGIMEN_US_LABEL: '#6ee7a8', APPROVED_BACKBONE_PLUS_INVESTIGATIONAL: '#2dd4bf',
+                                 UNRESOLVED_COMPONENT: '#b0b4c8', INVESTIGATIONAL_REGIMEN: '#8ea0ff', STANDARD_OF_CARE: '#cbd5e1',
+                                 APPROVED_DRUG_ADDON_UNVERIFIED: '#f5c26b', APPROVED_BACKBONE_PLUS_DISPUTED_ADDON: '#ff8a7a' }[a.category] || '#8ea0ff';
+  if (a.category === 'SUPPLEMENTAL') return '#9aa4b2';
+  if (a.category === 'APPROVED_AT_SCOPE') return (a.jurisdictions || []).includes('US') ? '#6ee7a8' : '#a3e635';
+  if (a.category === 'APPROVED_BROADER_TERM') return '#f5c26b';
+  if (a.category === 'LABEL_ONLY') return '#ff9d7d';
+  if (a.category === 'NOT_IN_OT_SCOPE_SET') return '#b0b4c8';
+  const s = a.ot_best_stage || '';
+  if (s === 'PHASE_3' || s === 'PHASE_2_3') return '#7db9ff';
+  if (s === 'PHASE_2') return '#9aa6d8';
+  return '#6e7391';
+}
+const ACTIVE = new Set(['RECRUITING','NOT_YET_RECRUITING','ACTIVE_NOT_RECRUITING','ENROLLING_BY_INVITATION']);
+
+function label(d) {
+  const a = d.data.attrs || {};
+  let t = d.data.name;
+  if (d.data.kind === 'drug' && a.category) {
+    if (a.brand_display && a.category !== 'INVESTIGATIONAL') t += ' (' + a.brand_display.split(', ').map(b => b.length > 24 ? b.slice(0, 22) + '…' : b).join(', ') + ')';
+    const bits = [];
+    if (a.category === 'APPROVED_BROADER_TERM' && a.scope_named_by && !a.scope_named_by.length) {
+      // Approved only for a different disease: show what it is actually approved for.
+      // Prefer the disease named in the EMA indication text; Open Targets terms ("leukemia") are too broad.
+      const DZ_RE = /(?:[a-z()-]+ ){0,3}(?:leuka?emia|lymphoma|myeloma|insufficiency|hyperplasia|oedema|edema|transplantation)/i;
+      const STOP = /^(?:(?:of|the|with|for|in|a|an|and|or|to|prior|treatment|therapy|patients|phase)\s+)+/i;
+      const ema = [...new Set((a.ema_indications || []).map(e => ((e.sentence || '').match(DZ_RE) || [''])[0].replace(STOP, '')).filter(Boolean))];
+      const dz = ema.length ? ema : [...new Set((a.approval_evidence || []).map(e => e.disease).filter(Boolean))];
+      bits.push('NOT approved for scope · approved for: ' + (dz.slice(0, 2).join(', ') || 'other disease') + (dz.length > 2 ? ' +' + (dz.length - 2) : '') + (ema.length ? ' (EMA)' : ' (OT term)'));
+    } else if (a.category === 'APPROVED_BROADER_TERM') bits.push('broader term');
+    if (a.therapeutic_role && a.therapeutic_role.tag) bits.push(a.therapeutic_role.tag.length > 70 ? a.therapeutic_role.tag.slice(0, 68) + '…' : a.therapeutic_role.tag);
+    if (a.category === 'LABEL_ONLY') bits.push('label-only');
+    if (a.category === 'SUPPLEMENTAL') bits.push('supplemental' + (a.us_gate ? ': ' + a.us_gate.split(' (')[0] : ''));
+    if (a.reference_jurisdictions && a.reference_jurisdictions.length) bits.push('ref: ' + a.reference_jurisdictions.join('/'));
+    if (a.category === 'INVESTIGATIONAL' && a.ot_best_stage) bits.push(a.ot_best_stage.replace('PHASE_', 'P'));
+    if (a.approved_as_partner_in && a.approved_as_partner_in.length) bits.push('partner in approved regimen');
+    if (a.trials_active) bits.push(a.trials_active + ' active');
+    if (bits.length) t += '  ·  ' + bits.join(' · ');
+  }
+  if (d.data.kind === 'regimen' && a.category === 'APPROVED_REGIMEN_US_LABEL') t = '✓ ' + t;
+  if (d.data.kind === 'regimen' && a.category === 'APPROVED_BACKBONE_PLUS_INVESTIGATIONAL') t = '✓+ ' + t;
+  if (a.pathway_status === 'investigational') t += '  ·  investigational';
+  if (a.pathway_status === 'standard') t += '  ·  standard';
+  if (d.data.kind === 'regimen') {
+    const rbits = [];
+    const rap = a.us_approval_scope_labeled || a.first_us_approval;
+    if (rap && rap.date) rbits.push('US ' + rap.date.slice(0, 7) + (a.us_approval_scope_labeled ? '' : '*'));
+    if ((a.jurisdictions || []).length) rbits.push(a.jurisdictions.join('/'));
+    if (rbits.length) t += '  ·  ' + rbits.join(' · ');
+  }
+  if (d.data.kind === 'study') t += '  ·  ' + PH(a.phase) + '  ·  ' + (a.start_date || 'n/a').slice(0, 4) + (a.decided_by === 'human' ? '  ·  human' : '');
+  if (d.data.kind === 'trial') t += '  ·  ' + PH(a.phase) + '  ·  ' + (a.start_year || 'n/a') + (a.status ? '  ·  ' + a.status.toLowerCase().replace(/_/g, ' ') : '');
+  return t.length > 72 ? t.slice(0, 70) + '…' : t;
+}
+
+function collapse(d) { if (d._full) { d._children = d._full; d.children = null; delete d._full; } else if (d.children) { d._children = d.children; d.children = null; } }
+function expand(d) { if (d._full) { d.children = d._full; d._children = null; delete d._full; } else if (d._children) { d.children = d._children; d._children = null; } }
+function collapseDeep(d) { (d.children || d._children || []).forEach(collapseDeep); collapse(d); }
+
+function initialState() {
+  // Post-order over children AND already-collapsed children: d3's root.each() never
+  // visits the kids of a node it has just collapsed, which left every drug inside a
+  // closed stage with its trials expanded (1000+ nodes appearing on first search).
+  const visit = d => {
+    kids(d).forEach(visit);
+    if (d.data.kind === 'drug' || d.data.kind === 'regimen' || d.data.kind === 'lit' || d.data.kind === 'study_set' || d.data.id === 'branch:graveyard') collapse(d);       // regimens / programs hidden until asked for
+    else if (d.data.kind === 'program' && (d.data.attrs.trials_total || 0) > 3) collapse(d);
+    else if (d.data.id === 'branch:pipeline' || (d.data.id.startsWith('path:') && d.data.kind === 'branch')) collapse(d); // pathway: click population, then subgroup, then phase
+    else if (d.data.kind === 'stage' && d.data.id !== 'npm1:active') collapse(d); // big pipelines start closed
+    else if (d.data.kind === 'branch' && d.data.id.startsWith('branch:stage:') && !['branch:stage:PHASE_3', 'branch:stage:PHASE_2_3', 'branch:stage:PHASE_2'].includes(d.data.id)) collapse(d); // Approved, Phase 3, Phase 2/3, Phase 2 start open; earlier/discontinued stages start closed
+  };
+  visit(root);
+}
+
+function update(source) {
+  // Row height (20) and depth spacing (300) were too tight for labels up to 110 chars:
+  // a node's text routinely extended past the next depth column and painted on top of
+  // that column's circles, both hiding them and stealing their clicks (whichever <g> was
+  // added to the DOM later wins the pointer hit). Shorter labels (see label(), 72 chars)
+  // plus more depth spacing keeps text within its own column; text is also pointer-events:none
+  // below so it can never intercept a click meant for an underlying node.
+  const layout = d3.tree().nodeSize([24, 340]);
+  layout(root);
+  const nodes = root.descendants(), links = root.links();
+
+  g.selectAll('.link').data(links, d => d.target.data.id)
+    .join('path').attr('class', 'link')
+    .attr('d', d3.linkHorizontal().x(d => d.y).y(d => d.x));
+
+  const n = g.selectAll('.node').data(nodes, d => d.data.id);
+  const enter = n.enter().append('g').attr('class', 'node')
+    .attr('transform', d => `translate(${(source.y0 ?? d.y)},${(source.x0 ?? d.x)})`)
+    .on('click', (ev, d) => { if (d._full) expand(d); else if (d.children || d._children) { d.children ? collapse(d) : expand(d); } showDetail(d); update(d); });
+  // Oversized, invisible hit target: the visible circle can be as small as 4px radius,
+  // too small to reliably click; this keeps a consistent ~11px click radius per node
+  // without changing how anything looks.
+  enter.append('circle').attr('class', 'hit').attr('r', 11).attr('fill', 'transparent');
+  enter.append('circle');
+  enter.append('text').attr('dy', '0.32em');
+  const all = enter.merge(n);
+  all.attr('class', d => 'node' + (d._match ? ' match' : ''));
+  all.transition().duration(250).attr('transform', d => `translate(${d.y},${d.x})`);
+  all.select('circle:not(.hit)')
+    .attr('r', d => d.data.kind === 'trial' ? 4 : (d.data.kind === 'regimen' || d.data.kind === 'program') ? 5 : d.data.kind === 'drug' ? 6 : 8)
+    .attr('fill', colorFor)
+    .attr('stroke-dasharray', d => d._children || d._full ? '2,2' : null);
+  all.select('text')
+    .attr('x', d => (d.children || d._children) ? -11 : 11)
+    .attr('text-anchor', d => (d.children || d._children) ? 'end' : 'start')
+    .text(label);
+  n.exit().remove();
+  nodes.forEach(d => { d.x0 = d.x; d.y0 = d.y; });
+}
+
+function fit() {
+  const b = g.node().getBBox();
+  if (!b.width) return;
+  const k = Math.min(1, 0.92 * Math.min(W() / (b.width + 80), H() / (b.height + 40)));
+  svg.transition().duration(300).call(zoom.transform,
+    d3.zoomIdentity.translate(40 - b.x * k, H() / 2 - (b.y + b.height / 2) * k).scale(k));
+}
+
+function showDetail(d) {
+  const a = d.data.attrs || {}, p = d.data.provenance || {}, box = document.getElementById('detail');
+  let h = `<div style="font-size:14px;font-weight:600;margin-bottom:6px">${esc(d.data.name)}</div>`;
+  h += `<dl class="kv"><dt>kind</dt><dd>${esc(d.data.kind)}</dd>`;
+  for (const [k, v] of Object.entries(a)) {
+    if (ATTR_SKIP.has(k) || v === null || v === undefined || v === '') continue;
+    h += `<dt>${esc(k)}</dt><dd>${esc(Array.isArray(v) ? v.join(', ') : typeof v === 'object' ? JSON.stringify(v) : v)}</dd>`;
+  }
+  h += `</dl>`;
+  if (a.category && CAT_TEXT[a.category]) h += `<div class="flagbox"><b>${esc(a.category)}</b><br>${esc(CAT_TEXT[a.category])}</div>`;
+  if (a.reason) h += `<div class="flagbox"><b>${esc(a.reason)}</b></div>`;
+  if ((a.tree_nodes || []).length) h += `<div class="snippet"><a href="#" onclick="revealNodes(${esc(JSON.stringify(a.tree_nodes))});return false" style="color:var(--acc)">show ${d.data.kind === 'regimen' ? 'drug and all its trials' : 'this trial'} in drug pipeline tree</a></div>`;
+  if (d.data.kind === 'article' && a.url) h += `<div class="snippet"><a href="${esc(a.url)}" target="_blank" style="color:var(--acc)">PubMed ${esc(a.pmid)}</a></div>`;
+  if (d.data.kind === 'lit' && a.pubmed_url) h += `<div class="snippet"><a href="${esc(a.pubmed_url)}" target="_blank" style="color:var(--acc)">run query on PubMed</a></div>`;
+
+  if (a.approval_lineage) h += renderLineage(a.approval_lineage, null);
+  else if (a.lineage_ref && LINEAGE[a.lineage_ref.drug_node]) h += renderLineage(LINEAGE[a.lineage_ref.drug_node], d.data);
+  if (a.first_us_approval_status !== undefined && d.data.kind === 'drug') {
+    const sl = a.us_approval_scope_labeled, f = a.first_us_approval;
+    h += `<div class="snippet"><b>US approval dates (Drugs@FDA, live)</b><br>` +
+      (sl ? `product whose current label names this disease: <b>${esc(sl.brand)}</b> (${esc(sl.application)}) - original approval <b>${esc(sl.date)}</b><br>` : `no current US label names this disease<br>`) +
+      (f ? `first US approval of the molecule, any indication: <b>${esc(f.date)}</b> (${esc(f.product || '')} ${esc(f.application)})<br>` : '') +
+      (a.label_expansion_candidates ? `FDA efficacy-supplement dates (NOT tagged by indication): ${Object.entries(a.label_expansion_candidates).map(([k, v]) => esc(k) + ': ' + v.map(esc).join(', ')).join('; ')}<br>` : '') +
+      `<span style="color:var(--dim)">${esc(a.approval_date_note || '')}</span></div>`;
+  }
+  if (Array.isArray(a.brands) && a.brands.length)
+    h += `<div class="snippet"><b>brand names</b> <span style="color:var(--dim)">(${esc(a.brand_basis || '')})</span><table style="width:100%;font-size:11px;margin-top:4px"><tr><th>brand</th><th>US label names disease</th><th>application</th><th>US approval</th><th>source</th></tr>` +
+      a.brands.map(b => `<tr><td>${esc(b.brand)}</td><td>${b.us_label_names_scope ? 'yes' : 'no'}</td><td>${esc(b.application || '')}</td><td>${esc(b.first_us_approval || '')}</td><td>${esc(b.source)}</td></tr>`).join('') + `</table></div>`;
+  if (Array.isArray(a.development_timeline) && a.development_timeline.length) {
+    const ap = a.us_approval_scope_labeled || a.first_us_approval;
+    h += `<div class="snippet"><b>development timeline (trials started per year, all regimens containing this drug)</b><br>` +
+      a.development_timeline.map(r => `${esc(r.year)}: ` + Object.entries(r.trials_started).map(([k, v]) => esc(k) + '×' + v).join(', ')).join('<br>') +
+      (ap && ap.date ? `<br><b>▶ US approval ${esc(ap.date)}${a.us_approval_scope_labeled ? '' : ' (molecule, any indication)'}</b>` : '') + `</div>`;
+  }
+  if (a.us_first_approval_by_drug) h += `<div class="snippet"><b>US first-approval dates of the drugs in this regimen</b> (molecule level)<br>` +
+    Object.entries(a.us_first_approval_by_drug).map(([k, v]) => esc(k) + ': ' + (v ? esc(v.date) + ' ' + esc(v.product || '') : 'n/a')).join('<br>') + `</div>`;
+  if (d.data.kind === 'program') {
+    h += `<div class="flagbox"><b>link basis: ${esc(a.link_basis)}</b><br>${a.link_basis === 'explicit' ? 'Linked by AACT evidence: ' + (a.link_evidence || []).map(esc).join('; ') : 'Unless explicit, this means only that one sponsor ran these trials of this regimen - a grouping aid, not a verified continuation.'}</div>`;
+    h += `<div class="snippet"><b>trials in start-date order</b><br>` + (a.trials || []).map(t => `${esc(t.nct)} · ${esc(PH(t.phase))} · ${esc(t.start || 'n/a')} · ${esc((t.status || '').toLowerCase().replace(/_/g, ' '))}`).join('<br>') + `</div>`;
+  }
+  if (Array.isArray(a.members) && a.members.length)
+    h += `<div class="snippet"><b>merged records (${a.members.length})</b><br>${a.members.map(esc).join('<br>')}</div>`;
+  if (a.fidelity) {
+    const f = a.fidelity, ap = f.approval, apb = f.approval_baseline;
+    h += `<div class="snippet"><b>data fidelity</b><br>` +
+      (ap ? `approval tier <b>${esc(ap.tier)}</b> (was ${esc(apb ? apb.tier : 'n/a')}) - ${ap.families.length} origin ${ap.families.length === 1 ? 'family' : 'families'}: ${ap.families.map(esc).join('; ') || 'none'}<br>confirmations: ${ap.confirmations.map(esc).join('; ') || 'none'}<br>` : '') +
+      `mechanism: <b>${esc(f.mechanism)}</b>` + (f.mechanism_families ? ' - ' + Object.entries(f.mechanism_families).map(([k, v]) => esc(k) + ': ' + v.slice(0, 8).map(esc).join('/')).join('; ') : '') +
+      (f.group ? `<br>group fidelity: <b>${esc(f.group.level)}</b>${f.group.kinds && f.group.kinds.length ? ' (' + f.group.kinds.map(esc).join('; ') + ')' : ''}` : '') +
+      (f.group_proposal ? `<br><b style="color:var(--warn)">review:</b> ${esc(f.group_proposal.symbol)} &rarr; ${esc(f.group_proposal.group)} not assigned - ${esc(f.group_proposal.reason || '')} (${(f.group_proposal.families || []).map(esc).join(', ') || 'no family'}, ${esc(f.group_proposal.n_targets)} targets listed)` : '') + `</div>`;
+  }
+  if (Array.isArray(a.approval_letters) && a.approval_letters.length) {
+    const fl = a.scope_indication_first_letter;
+    h += `<div class="snippet"><b>FDA approval letters (Drugs@FDA, keyword-searched)</b>` +
+      (fl ? `<br>earliest letter naming the scope: <b>${esc(fl.date)}</b> (${esc(fl.application)}, matched "${esc(fl.term)}") - a candidate scope-indication approval date` : '') +
+      a.approval_letters.map(l => `<br>${esc(l.date || 'n/a')} &middot; ${esc(l.application)} ${esc(l.submission || '')}${l.cls ? '/' + esc(l.cls) : ''} &middot; ${l.status === 'text' ? (l.mentions ? '<b style="color:var(--ok)">names the scope</b>' : 'does not name the scope') : esc(l.status)} &middot; <a href="${esc(l.url)}" target="_blank" style="color:var(--acc)">letter</a>` +
+        (l.snippet ? `<br>&nbsp;&nbsp;<i>&ldquo;${esc(l.snippet)}&rdquo;</i>` : '')).join('') + `</div>`;
+  }
+  if (a.fidelity && a.fidelity.mechanism_activity)
+    h += `<div class="snippet"><b>activity-only (no curated mechanism)</b><br><span style="color:var(--dim)">potency rows at pActivity &ge; 7 - measurements, not a mechanism claim; never assigns a group</span><br>` +
+      Object.entries(a.fidelity.mechanism_activity).map(([k, v]) => esc(k) + ': ' + Object.entries(v).map(([sym, p]) => esc(sym) + ' ' + Number(p).toFixed(1)).join(', ')).join('<br>') + `</div>`;
+  if (a.outside_sources) {
+    const o = a.outside_sources, dc = o.drugcentral || {}, gt = o.iuphar || {}, of = o.openfda || {};
+    h += `<div class="snippet"><b>outside sources (identifier-joined)</b><br>` +
+      `DrugCentral: ${(dc.structures || []).length ? 'matched by ' + (dc.match || []).map(esc).join(', ') + (dc.unii && dc.unii.length ? ' &middot; UNII ' + dc.unii.map(esc).join(', ') : '') : 'no match'}` +
+      ((dc.approvals || []).length ? '<br>&nbsp;&nbsp;approval records (drug-level): ' + dc.approvals.map(x => esc(x.agency) + ' ' + esc(x.date || 'n/a')).join('; ') : '') +
+      ((dc.curated_indications || []).length ? '<br>&nbsp;&nbsp;curated AML indication: ' + dc.curated_indications.map(esc).join('; ') : '') +
+      ((dc.mechanism || []).length ? '<br>&nbsp;&nbsp;mechanism rows: ' + dc.mechanism.map(x => esc(x.symbols.join('/')) + ' [' + esc(x.source) + ']').join('; ') : '') +
+      `<br>IUPHAR: ${(gt.ligands || []).length ? 'matched by ' + (gt.match || []).map(esc).join(', ') + (gt.approved ? ' &middot; flagged approved' : '') : 'no match'}` +
+      ((gt.primary_targets || []).length ? '<br>&nbsp;&nbsp;primary targets: ' + gt.primary_targets.map(x => esc(x.symbol) + ' (' + esc(x.action || 'n/a') + ')').join('; ') : '') +
+      renderCitations(gt.citations) +
+      `<br>openFDA: ${(of.label_application_numbers || []).length ? 'label application(s) ' + of.label_application_numbers.map(esc).join(', ') : 'no label found'}` +
+      ((of.scope_linked_records || []).length ? '<br>&nbsp;&nbsp;label-linked Drugs@FDA record(s): ' + of.scope_linked_records.map(x => esc(x.application) + ' first approved ' + esc(x.first_approval || 'n/a')).join('; ') : '') +
+      (o.name_only_candidates_not_credited && (o.name_only_candidates_not_credited.drugcentral.length || o.name_only_candidates_not_credited.iuphar.length) ? '<br><span style="color:var(--warn)">name-only candidate(s), NOT credited (no identifier matched): DrugCentral ' + o.name_only_candidates_not_credited.drugcentral.length + ', IUPHAR ' + o.name_only_candidates_not_credited.iuphar.length + '</span>' : '') + `</div>`;
+  }
+  if (a.mutation_group)
+    h += `<div class="snippet"><b>mutation/mechanism group: ${esc(a.mutation_group)}</b><br><span style="color:var(--dim)">${esc(a.mutation_group_basis || '')}</span>` +
+      (Array.isArray(a.mechanism_targets) && a.mechanism_targets.length ? `<br>molecular target(s) (Open Targets drug_mechanism_of_action): ${a.mechanism_targets.map(esc).join(', ')}` : '') + `</div>`;
+  if (Array.isArray(a.reference_claims) && a.reference_claims.length)
+    h += `<div class="snippet"><b>reference PR/FDA-page claims (independent cross-check)</b><table style="width:100%;font-size:11px;margin-top:4px">` +
+         `<tr><th>claim</th><th>group</th><th>date check</th></tr>` +
+         a.reference_claims.map(c => `<tr><td>${esc(c.claim)}</td><td>${esc(c.expected_group)}</td><td>expected ${esc(c.expected_approval_date)}<br>page: ${c.date_matches ? 'match' : 'no (' + esc(c.page_approval_date || 'not fetched') + ')'}<br>Drugs@FDA record: ${c.record_date_matches ? 'match' : 'no'}<br>approval letter: ${c.letter_date_matches ? 'match' : 'no'}</td></tr>`).join('') + `</table></div>`;
+  if (Array.isArray(a.reference_pages) && a.reference_pages.length)
+    h += `<div class="snippet"><b>reference pages fetched</b><br>` + a.reference_pages.map(p =>
+      `<a href="${esc(p.url)}" target="_blank" style="color:var(--acc)">${esc(p.id)}</a> (${esc(p.status)})` +
+      (p.approval_sentence ? `<br><i>"${esc(p.approval_sentence)}"</i>` : '') +
+      (p.partners_claimed && p.partners_claimed.length ? `<br>page claims partner(s): ${esc(p.partners_claimed.join(', '))}` : '')
+    ).join('<br><br>') + `</div>`;
+  if (Array.isArray(a.scope_named_by) && a.category && a.category !== 'INVESTIGATIONAL')
+    h += `<div class="snippet"><b>sources naming the scope disease</b><br>` + (a.scope_named_by.length ? a.scope_named_by.map(esc).join('<br>')
+      : '<span style="color:var(--warn)">none: approved only for another disease (see indications below), so it is not counted as approved here</span>') + `</div>`;
+  if (a.therapeutic_role)
+    h += `<div class="snippet"><b>therapeutic role: ${esc(a.therapeutic_role.tag)}</b>` +
+      (a.therapeutic_role.basis ? `<br><span style="color:var(--dim)">read from: ${esc([].concat(a.therapeutic_role.basis).join(', '))}</span>` : '') + `</div>`;
+  if (a.approved_for || a.investigated_for || (d.data.kind === 'trial' && a.tags)) {
+    h += `<div class="snippet"><b>quick tags</b> <span style="color:var(--dim)">(searchable)</span>`;
+    if (a.approved_for) h += `<br>approved for: ` + Object.entries(a.approved_for).map(([t, src]) => `<span class="pill" title="${esc(src.join(', '))}">${esc(t)}</span>`).join(' ');
+    if (a.investigated_for) h += `<br>investigated for: ` + Object.entries(a.investigated_for).map(([t, v]) =>
+      `<span class="pill" title="e.g. ${esc(v.example_ncts.join(', '))}">${esc(t)} · ${v.trials} trials, ${v.live} live</span>`).join(' ');
+    if (d.data.kind === 'trial' && a.tags) h += `<br>` + a.tags.map(t => `<span class="pill" title="from: ${esc((a.tag_basis || {})[t] ? a.tag_basis[t].join(', ') : '')}">${esc(t)}</span>`).join(' ');
+    if (typeof a.tag_basis === 'string') h += `<br><span style="color:var(--dim)">${esc(a.tag_basis)}</span>`;
+    h += `</div>`;
+  }
+  if (Array.isArray(a.ema_indications) && a.ema_indications.length)
+    h += `<div class="snippet"><b>EMA authorised indications</b><br>` + a.ema_indications.map(e =>
+      `<a href="${esc(e.url)}" target="_blank" style="color:var(--acc)">${esc(e.medicine)}</a> (${esc((e.substances || []).join(' + '))}, ${esc(e.authorised || '')})` +
+      `${e.names_scope ? ' <b>names scope</b>' : ''}<br><i>"${esc((e.sentence || '').slice(0, 400))}"</i>`).join('<br><br>') + `</div>`;
+  if (Array.isArray(a.approved_as_partner_in) && a.approved_as_partner_in.length)
+    h += `<div class="snippet"><b>appears as a PARTNER in label-approved regimens</b><br>${a.approved_as_partner_in.map(esc).join('<br>')}</div>`;
+  if (Array.isArray(a.approval_evidence) && a.approval_evidence.length) {
+    h += `<div class="snippet"><b>approval evidence (Open Targets regulatory reports)</b><table style="width:100%;font-size:11px;margin-top:4px">` +
+         `<tr><th>reg.</th><th>source</th><th>disease term</th><th>relation</th></tr>` +
+         a.approval_evidence.map(e => `<tr><td>${esc(e.jurisdiction)}</td><td>${esc(e.source)}</td><td>${esc(e.disease)}</td>` +
+           `<td>${esc(e.relation)}${e.distance ? ' (' + e.distance + ' up)' : ''}</td></tr>`).join('') + `</table></div>`;
+  } else if (a.approval_evidence && typeof a.approval_evidence === 'object' && !Array.isArray(a.approval_evidence)) {
+    const e = a.approval_evidence;   // regimen matched a live US label clause
+    h += `<div class="snippet"><b>label evidence (live openFDA)</b><br>${esc(e.brand || '')} · label ${esc(e.effective_time || '')} · set ${esc(e.set_id || '')}` +
+         `${e.backbone ? '<br>approved backbone: ' + esc(e.backbone.join(' + ')) : ''}<br><i>“${esc(e.sentence || '')}”</i><br><span style="color:var(--dim)">parse: ${esc(e.parse || '')}</span>` +
+         `${e.reference_dispute ? '<br><b style="color:var(--bad)">⚠ ' + esc(e.reference_dispute) + '</b>' : ''}</div>`;
+  }
+  if (Array.isArray(a.component_mechanisms) && a.component_mechanisms.length)
+    h += `<div class="snippet"><b>mechanism, by component drug</b><br><span style="color:var(--dim)">mapped down from the drug's own tag (see resolve_group) - never re-derived here</span><br>` +
+      a.component_mechanisms.map(m => `<b>${esc(m.drug)}</b>: ${esc(m.mutation_group)}` + (m.mechanism_targets && m.mechanism_targets.length ? ' (' + m.mechanism_targets.slice(0, 3).map(esc).join(', ') + ')' : '') + renderCitations(m.citations)).join('<br>') + `</div>`;
+  if (Array.isArray(a.arms) && a.arms.length) h += `<div class="snippet"><b>arms in this regimen</b><br>${a.arms.map(esc).join('<br>')}</div>`;
+  if (Array.isArray(a.comparator_arms) && a.comparator_arms.length) h += `<div class="snippet"><b>control arms (placebo-containing, not counted as a regimen)</b><br>${a.comparator_arms.map(esc).join('<br>')}</div>`;
+  if (Array.isArray(a.all_trial_ids)) h += `<div class="snippet"><b>all ${a.all_trial_ids.length} trials in this regimen</b> (grouped into programs below)<br><span class="mono">${a.all_trial_ids.slice(0, 40).map(esc).join(' ')}${a.all_trial_ids.length > 40 ? ' …' : ''}</span></div>`;
+  if (Array.isArray(a.unmapped_components) && a.unmapped_components.length) h += `<div class="snippet"><b>unmapped components</b><br>${a.unmapped_components.map(esc).join('<br>')}</div>`;
+  if (Array.isArray(a.ncts) && a.ncts.length) h += `<div class="snippet mono">${a.ncts.slice(0, 60).map(esc).join(' ')}${a.ncts.length > 60 ? ' …' : ''}</div>`;
+  h += `<div class="snippet mono"><b>provenance</b><br>${esc(JSON.stringify(p))}</div>`;
+  box.innerHTML = h;
+}
+
+function renderFidelity(f) {
+  const box = document.getElementById('fid');
+  if (!f) { box.textContent = 'not in this tree.json'; return; }
+  const pair = (b, i) => `${esc(b ?? 0)} &rarr; <b>${esc(i ?? 0)}</b>`;
+  const n = f.approved_drugs, r = f.reference, tb = f.approval_tier_baseline || {}, ti = f.approval_tier_integrated || {};
+  const mt = f.mechanism_tier.all_drugs, ma = f.mechanism_tier.approved, mi = f.mechanism_tier.investigational;
+  const mrow = (x) => ['corroborated', 'single-family', 'activity-only', 'no data'].map(k => `${k}: ${pair((x.baseline || {})[k], (x.integrated || {})[k])}`).join('<br>');
+  let h = `<dl class="kv">` +
+    `<dt>approval tier</dt><dd>${['A', 'B', 'C', 'D'].map(t => `${t}: ${pair(tb[t], ti[t])}`).join('<br>')}<br><span style="color:var(--dim)">of ${esc(n)} approved drugs</span></dd>` +
+    `<dt>&ge;2 origin families</dt><dd>${pair(f.approved_with_2plus_origin_families.baseline, f.approved_with_2plus_origin_families.integrated)}</dd>` +
+    `<dt>tier, letters excluded</dt><dd>${['A', 'B', 'C', 'D'].map(t => `${t}: ${esc((f.approval_tier_integrated_without_letters || {})[t] ?? 0)}`).join(' &middot; ')}<br><span style="color:var(--dim)">&ge;2 families without letters: ${esc(f.approved_with_2plus_origin_families.integrated_without_letters)}</span></dd>` +
+    `<dt>curated claim dates</dt><dd>${esc(f.claims.verified_by_any)} of ${esc(f.claims.total)} verified (page ${esc(f.claims.verified_by_page)}, Drugs@FDA record ${esc(f.claims.verified_by_drugsfda_record)}, letter ${esc(f.claims.verified_by_approval_letter)})</dd>` +
+    `<dt>approval letters</dt><dd>${esc(f.approval_letters.read)} read: ${esc(f.approval_letters.naming_scope)} name the scope, ${esc(f.approval_letters.no_text_layer)} scanned (no text), ${esc(f.approval_letters.fetch_failed)} failed; ${esc(f.approval_letters.drugs_with_a_letter_naming_scope)} drugs</dd>` +
+    `<dt>scope-indication date from letters</dt><dd>${esc(r.scope_indication_first_approval_date_from_letters)} drugs</dd>` +
+    `<dt>indication-level reference</dt><dd>${esc(r.indication_level_without_letters)} &rarr; <b>${esc(r.indication_level_with_letters)}</b> with letters (of ${esc(n)})</dd>` +
+    `<dt>curated page claim</dt><dd>${esc(r.curated_page_claim)} (date-verified ${esc(r.curated_page_date_verified)})</dd>` +
+    `<dt>dated regulator record</dt><dd>${esc(r.outside_dated_regulator_record)}</dd>` +
+    `<dt>curated AML indication</dt><dd>${esc(r.curated_indication_agrees)}</dd>` +
+    `<dt>any reference-grade</dt><dd><b>${esc(r.any_reference_grade_evidence)}</b> of ${esc(n)}</dd>` +
+    `<dt>mechanism, all drugs</dt><dd>${mrow(mt)}</dd>` +
+    `<dt>mechanism, approved</dt><dd>${mrow(ma)}</dd>` +
+    `<dt>mechanism, investigational</dt><dd>${mrow(mi)}</dd>` +
+    `<dt>General w/o curated mechanism</dt><dd>${pair((f.general_group_without_curated_mechanism || {}).baseline, (f.general_group_without_curated_mechanism || {}).integrated)}<br><span style="color:var(--dim)">${esc((f.activity_only_drugs || []).length)} have activity-only rows</span></dd>` +
+    `<dt>group fidelity</dt><dd>${Object.entries(f.group_fidelity || {}).map(([k, v]) => esc(k) + ': ' + esc(v)).join('<br>')}</dd>` +
+    `<dt>DrugCentral match</dt><dd>approved ${esc(f.matches.drugcentral.approved)}, investigational ${esc(f.matches.drugcentral.investigational)}<br><span style="color:var(--dim)">${Object.entries(f.matches.drugcentral.methods).map(([k, v]) => esc(k) + ' ' + esc(v)).join(', ')}</span></dd>` +
+    `<dt>IUPHAR match</dt><dd>approved ${esc(f.matches.iuphar.approved)}, investigational ${esc(f.matches.iuphar.investigational)}<br><span style="color:var(--dim)">${Object.entries(f.matches.iuphar.methods).map(([k, v]) => esc(k) + ' ' + esc(v)).join(', ')}</span></dd>` +
+    `<dt>not in DrugCentral</dt><dd>${f.matches.unmatched_approved_in_drugcentral.map(esc).join(', ') || 'none'}</dd>` +
+    `</dl>`;
+  if ((f.group_deltas || []).length)
+    h += `<div class="flagbox"><b>${f.group_deltas.length} drug(s) moved out of General by the corrected group precedence</b><br>` + f.group_deltas.map(x => esc(x.drug) + ': ' + esc(x.before) + ' &rarr; ' + esc(x.after)).join('<br>') + `</div>`;
+  if ((f.group_proposals || []).length)
+    h += `<div class="flagbox"><b>proposals not applied</b><br>` + f.group_proposals.map(x => esc(x.drug) + ': ' + esc(x.symbol) + ' &rarr; ' + esc(x.proposed) + ' - ' + esc(x.reason || '')).join('<br>') + `</div>`;
+  const lm = f.label_mention || {};
+  if ((lm.approved_gained_by_ontology_terms || []).length || (lm.investigational_that_would_become_label_only || []).length)
+    h += `<div class="flagbox"><b>ontology-derived label terms</b><br>evidence gained for approved: ${(lm.approved_gained_by_ontology_terms || []).map(esc).join(', ') || 'none'}<br>investigational drugs whose label would name the scope (category NOT changed): ${(lm.investigational_that_would_become_label_only || []).map(esc).join(', ') || 'none'}</div>`;
+  const so = f.sources || {};
+  h += `<div style="color:var(--dim);margin-top:6px">${esc(so.gtopdb_version || '')} &middot; DrugCentral pulled ${esc((so.drugcentral_fetched_at || '').slice(0, 10))} (latest FDA approval in its data: ${esc((so.drugcentral_latest_approval_by_agency || {}).FDA || 'n/a')}) &middot; openFDA key ${so.openfda_key_used ? 'used' : 'not used'} &middot; ${esc(so.ontology_terms)} ontology terms</div>`;
+  box.innerHTML = h;
+}
+
+// Searchable text per node. Names only for trials/programs (matching trial titles made
+// "venetoclax" highlight ~300 trials that merely mention it); drugs add brands, the
+// therapeutic role tag and any quick tags (attrs.tags) so "maintenance" or "r/r" finds them.
+function haystack(d) {
+  const a = d.data.attrs || {};
+  const parts = [d.data.name];
+  if (d.data.kind === 'drug') {
+    (a.brands || []).forEach(b => parts.push(b.brand));
+    if (a.therapeutic_role) parts.push(a.therapeutic_role.tag || '');
+    (a.tags || []).forEach(t => parts.push(t));
+  }
+  return parts.join(' | ').toLowerCase();
+}
+
+// Approval lineage (data/curated/approval_lineage.json, checked by tools/lineage_verify.py).
+// Drug node: full chain + every linked trial bucketed by phase. Trial/study node: the chain with
+// this trial's steps marked, and buckets holding only the trials of approvals up to its latest step.
+let LINEAGE = {};
+const LPH = ['PHASE1', 'PHASE1_2', 'PHASE2', 'PHASE2_3', 'PHASE3', 'PHASE4'];
+const LPH_NAME = {PHASE1: 'Ph1', PHASE1_2: 'Ph1/2', PHASE2: 'Ph2', PHASE2_3: 'Ph2/3', PHASE3: 'Ph3', PHASE4: 'Ph4'};
+const LSTATUS = {verified: 'var(--ok)', verified_with_override: 'var(--acc)', needs_review: 'var(--warn)'};
+function renderLineage(L, focus) {
+  const drugId = Object.keys(LINEAGE).find(k => LINEAGE[k] === L);
+  const fnct = focus ? (focus.attrs.nct_id || (focus.id.match(/:t:(NCT\d{8})$/) || [])[1]) : null;
+  const mine = new Set(focus ? focus.attrs.lineage_ref.steps.map(s => s.step) : []);
+  const until = focus ? L.steps.filter(s => mine.has(s.step)).map(s => s.date).sort().pop() : null;
+  const m = L.mechanism || {};
+  let h = `<div class="snippet"><b>approval lineage: ${esc(L.drug)}</b> &middot; ${esc(m.class || '')}${(m.targets || []).length ? ' (' + m.targets.map(esc).join(', ') + ')' : ''} &middot; ${esc(L.application)}` +
+    `<br><span style="color:var(--dim)">human-entered chain, checked against ClinicalTrials.gov and FDA label/review text; status per step</span>` +
+    `<table style="width:100%;font-size:11px;margin-top:4px"><tr><th>date</th><th>step</th><th>disease</th><th>type</th><th>status</th></tr>` +
+    L.steps.map(s => `<tr style="${mine.has(s.step) ? 'background:#22283a;font-weight:600' : ''}${until && s.date > until ? ';opacity:.45' : ''}" title="${esc(s.indication)}">` +
+      `<td>${esc(s.date)}</td><td>${esc(s.step)}</td><td>${esc(s.disease)}</td><td>${esc(s.type)}${s.kind === 'original_indication' ? ' (orig.)' : ''}</td>` +
+      `<td style="color:${LSTATUS[s.status] || 'var(--bad)'}">${esc(s.status.replace(/_/g, ' '))}</td></tr>` +
+      (s.reasons.length ? `<tr><td></td><td colspan="4" style="color:var(--warn)">${s.reasons.map(esc).join('<br>')}</td></tr>` : '')).join('') + `</table>`;
+  const seen = new Map();   // nct -> entry; one entry per trial, roles merged
+  for (const s of L.steps) {
+    if (until && s.date > until) continue;
+    for (const t of s.trials) {
+      const e = seen.get(t.nct) || Object.assign({}, t, {uses: []});
+      e.uses.push(s.step + ' ' + t.role.replace('_', '-'));
+      seen.set(t.nct, e);
+    }
+  }
+  const buckets = {};
+  for (const t of seen.values()) (buckets[t.phase || 'n/a'] = buckets[t.phase || 'n/a'] || []).push(t);
+  h += `<div style="margin-top:6px"><b>linked trials by phase</b>${focus ? ' <span style="color:var(--dim)">(approvals up to ' + esc(until) + ')</span>' : ''}` +
+    ` &middot; <a href="#" onclick="revealLineage(${esc(JSON.stringify(drugId))});return false" style="color:var(--acc)">show all linked in tree</a></div>`;
+  for (const ph of LPH.concat(['n/a'])) {
+    if (!buckets[ph]) continue;
+    h += `<div style="margin-top:4px"><b>${esc(LPH_NAME[ph] || ph)}</b>` + buckets[ph].sort((x, y) => (x.start || '').localeCompare(y.start || '')).map(t =>
+      `<br>&nbsp;&nbsp;${t.nct === fnct ? '&#9654; ' : ''}` +
+      (t.node_ids.length ? `<a href="#" onclick="revealNodes(${esc(JSON.stringify(t.node_ids))});return false" style="color:var(--acc)">${esc(t.nct)}</a>`
+                         : `${esc(t.nct)} <span style="color:var(--dim)">(not in this disease tree, reference only)</span>`) +
+      ` &middot; ${esc(t.start || 'n/a')} &middot; ${t.uses.map(esc).join(', ')}` +
+      (t.basis ? ` &middot; <span style="color:${t.basis === 'doc_supported' ? 'var(--ok)' : 'var(--warn)'}">${esc(t.basis.replace('_', ' '))}</span>` : '') +
+      (t.title ? `<br>&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:var(--dim)">${esc(t.title.slice(0, 110))}</span>` : '')).join('') + `</div>`;
+  }
+  return h + `</div>`;
+}
+function findNode(id) { let hit = null; const w = d => { if (hit) return; if (d.data.id === id) { hit = d; return; } kids(d).forEach(w); }; w(root); return hit; }
+// Open only the path to each target: every ancestor shows just the children on a path
+// (its other children stay in _full; clicking that ancestor shows them all).
+function revealNodes(ids) {
+  const targets = ids.map(findNode).filter(Boolean);
+  if (!targets.length) return;
+  const onPath = new Set();
+  targets.forEach(t => t.ancestors().forEach(a => onPath.add(a)));
+  const clear = d => { d._match = false; kids(d).forEach(clear); }; clear(root);
+  for (const a of onPath) {
+    if (targets.includes(a)) continue;
+    const full = kids(a);
+    a._full = full; a.children = full.filter(c => onPath.has(c)); a._children = null;
+  }
+  targets.forEach(t => t._match = true);
+  update(root);
+  jumpTo(targets[0]);
+}
+function revealLineage(drugId) {
+  const L = LINEAGE[drugId];
+  if (L) revealNodes([...new Set(L.steps.flatMap(s => s.trials.flatMap(t => t.node_ids)))]);
+}
+
+let HITS = [], HIT_I = 0;
+function jumpTo(d) {
+  const k = 1;
+  svg.transition().duration(300).call(zoom.transform, d3.zoomIdentity.translate(W() * 0.4 - d.y * k, H() / 2 - d.x * k).scale(k));
+}
+function search(term) {
+  term = term.trim().toLowerCase();
+  const out = document.getElementById('hits');
+  // Reset over collapsed children too: root.each() skips them, which left stale highlights.
+  const clear = d => { d._match = false; kids(d).forEach(clear); };
+  clear(root);
+  HITS = []; HIT_I = 0;
+  // Short terms match thousands of nodes and expanding them all froze the page.
+  if (term.length < 3) {
+    initialState(); update(root);
+    out.textContent = term ? 'type 3+ chars' : '';
+    return;
+  }
+  initialState();
+  // A matched drug is the answer: do not also open its own regimens/programs, whose names
+  // repeat the drug name ("venetoclax" opened 3000+ nodes that way).
+  const walk = d => {
+    d._match = haystack(d).includes(term);
+    if (d._match && d.data.kind === 'drug') return true;
+    let sub = false;
+    for (const c of kids(d)) if (walk(c)) sub = true;
+    if (sub) d._open = true;
+    return sub || d._match;
+  };
+  walk(root);
+  const collect = d => { if (d._match) HITS.push(d); kids(d).forEach(collect); }; collect(root);
+  // Expanding thousands of hits (e.g. "NCT0") froze the page for seconds; report the count instead.
+  const MAX_OPEN = 400;
+  const open = d => { if (d._open) { delete d._open; if (HITS.length <= MAX_OPEN) expand(d); } kids(d).forEach(open); };
+  open(root);
+  update(root);
+  if (HITS.length > MAX_OPEN) { out.textContent = `${HITS.length} matches, refine the term`; HITS = []; return; }
+  out.textContent = HITS.length ? `1/${HITS.length} (Enter = next)` : 'no match';
+  if (HITS.length) jumpTo(HITS[0]);
+}
+function nextHit() {
+  if (!HITS.length) return;
+  HIT_I = (HIT_I + 1) % HITS.length;
+  document.getElementById('hits').textContent = `${HIT_I + 1}/${HITS.length} (Enter = next)`;
+  jumpTo(HITS[HIT_I]);
+}
+
+let LIT_VALIDATED = {};
+
+// PubMed support (tools/scope_drug_lit.py) appended under its drug node. Exact-ID joins only:
+// NCT[si] per trial under the node, plus the drug x scope-disease MeSH query as background.
+function attachScopeLit(tree, sl) {
+  if (!sl || sl.available === false) return;
+  const find = n => n.id === sl.drug.node_id ? n : (n.children || []).reduce((h, c) => h || find(c), null);
+  const drug = find(tree);
+  if (!drug) return;
+  const art = (x, tier) => ({ id: 'lit:' + (tier || '') + ':' + x.pmid, kind: 'article', name: (x.year || 'n/a') + '  ' + x.title,
+    attrs: { pmid: x.pmid, journal: x.journal, year: x.year, pubtypes: x.pubtypes, tier, scope_mesh_tagged: x.scope_mesh_tagged, url: x.url } });
+  const s = sl.summary, m = sl.mesh_tagged, id = drug.id + ':lit';
+  const trials = sl.trial_linked.map(t => ({ id: id + ':nct:' + t.nct, kind: 'lit', name: t.nct + '  ·  ' + t.articles.length + ' linked',
+    attrs: { nct: t.nct, paths: t.paths, join: t.nct + '[si]' }, children: t.articles.map(x => art(x, 'nct')) }));
+  drug.children = (drug.children || []).concat([{ id, kind: 'lit', name: `PubMed articles (${sl.disease_mesh})`,
+    attrs: { ...s, drug_mesh: sl.drug.mesh, disease_mesh: sl.disease_mesh }, children: [
+      { id: id + ':trial', kind: 'lit', name: `trial-linked (NCT[si])  ·  ${s.trials_with_articles}/${s.trials} trials, ${s.trial_linked_pmids} articles`,
+        attrs: { join: 'PubMed secondary source ID = trial NCT', trials: s.trials, trials_with_articles: s.trials_with_articles }, children: trials },
+      { id: id + ':mesh', kind: 'lit', name: `MeSH-tagged  ·  ${m.total} articles (background, not trial-linked)`,
+        attrs: { query: m.query, total: m.total, drug_any_mesh: m.total_drug_any_mesh, by_pubtype: m.by_pubtype, pubmed_url: m.pubmed_url },
+        children: m.sample.map(x => art(x, x.tier)) },
+    ] }]);
+}
+
+async function load() {
+  treeData = await (await fetch('/api/tree')).json();
+  const lit = await (await fetch('/api/lit')).json();
+  const scopeLit = await (await fetch('/api/scope-lit')).json();
+  if (lit.available !== false) LIT_VALIDATED = lit.pmids || {};
+  if (treeData.available === false) {
+    document.getElementById('meta').textContent = 'No tree.json yet. Run: tools/export_disease_tree.py';
+    return;
+  }
+  document.getElementById('title').textContent = treeData.name;
+  const m = treeData.meta;
+  document.getElementById('meta').innerHTML =
+    `scope <b>${esc(m.scope.id)}</b> ${esc(m.scope.name)} · Open Targets snapshot ${esc(m.sources.open_targets_snapshot.slice(0,10))} · ` +
+    `generated ${esc(m.generated_at.replace('T',' ').slice(0,16))} UTC · <b style="color:var(--ok)">no LLM in data path</b>`;
+  document.getElementById('inv').innerHTML = m.invariants.map(i =>
+    `<div class="inv ${i.ok ? '' : 'fail'}"><b>${i.ok ? 'PASS' : 'FAIL'}</b> ${esc(i.name)}${i.ok ? '' : `<span class="d">${esc(i.detail)}</span>`}</div>`).join('');
+  document.getElementById('rules').innerHTML = (m.rules || []).map(r => `<li style="margin-bottom:4px">${esc(r.replace(/^\d+\.\s*/, ''))}</li>`).join('');
+  document.getElementById('counts').innerHTML = Object.entries(m.counts).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v !== null && typeof v === 'object' ? JSON.stringify(v) : v)}</dd>`).join('');
+  renderFidelity(m.fidelity);
+
+  svg = d3.select('#svg');
+  g = svg.append('g');
+  zoom = d3.zoom().scaleExtent([0.15, 3]).on('zoom', e => g.attr('transform', e.transform));
+  svg.call(zoom);
+  attachScopeLit(treeData, scopeLit);
+  root = d3.hierarchy(treeData);
+  root.each(d => { if (d.data.attrs && d.data.attrs.approval_lineage) LINEAGE[d.data.id] = d.data.attrs.approval_lineage; });
+  root.x0 = 0; root.y0 = 0;
+  initialState();
+  update(root);
+  fit();
+}
+
+document.getElementById('fit').onclick = fit;
+document.getElementById('expand').onclick = () => { root.each(expand); update(root); fit(); };
+document.getElementById('collapse').onclick = () => {
+  const all = d => { kids(d).forEach(all); if (d.depth > 0) collapse(d); };
+  all(root); (root.children || []).forEach(expand); update(root); fit();
+};
+let searchTimer;
+const q = document.getElementById('q');
+q.addEventListener('input', e => { clearTimeout(searchTimer); searchTimer = setTimeout(() => search(e.target.value), 250); });
+q.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); nextHit(); } });
+load();
+</script>
+</body>
+</html>
