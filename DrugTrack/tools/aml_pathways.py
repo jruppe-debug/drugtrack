@@ -133,8 +133,8 @@ POPULATIONS = [
     ("nd_60_75", "Newly diagnosed, age 60-75, fit for intensive chemotherapy", 3, fit_population(3, True)),
     ("nd_unfit", "Newly diagnosed, age >=75 or unfit for intensive chemotherapy", 4, UNFIT),
     ("rr", "Relapsed or refractory", 5, RR),
-    ("apl", "Acute promyelocytic leukemia (APL)", None, APL),
 ]
+# APL is kept for its own chart and stays out of the AML pathway: ("apl", "Acute promyelocytic leukemia (APL)", None, APL)
 
 CATEGORY = {"approved": "APPROVED_REGIMEN_US_LABEL", "standard": "STANDARD_OF_CARE", "investigational": "INVESTIGATIONAL_REGIMEN"}
 

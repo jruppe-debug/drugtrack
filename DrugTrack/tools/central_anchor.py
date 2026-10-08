@@ -126,6 +126,8 @@ def run():
                 walk(c)
         walk(json.load(open(os.path.join(DATA, "tree.json"), encoding="utf-8")))
         only_scope = {d for d, c in cats.items() if c == "APPROVED_AT_SCOPE"}   # US gate: supplemental/excluded drugs are not anchors
+        # Components of a US-approved AML combination product (CPX-351 / Vyxeos) keep their anchor so the pathway regimen links.
+        only_scope |= {"DAUNORUBICIN", "CYTARABINE"} & set(cats)
         print("approved drugs in scope:", len(only_scope))
         # Full runs save after every drug to OUT.partial and resume from it (and from pilot results in OUT),
         # so a stopped run loses at most one drug.

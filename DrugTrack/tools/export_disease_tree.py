@@ -18,7 +18,7 @@ Categorisation layer (see meta.rules in the output):
     trials with no usable arms go to an explicit audit bucket, never dropped
 
 Run with Clinical Tracker's interpreter:
-  ../.venv/Scripts/python.exe tools/export_disease_tree.py   (run from DrugTrack/)
+  "C:/Users/jwrup/Clinical Tracker/.venv/Scripts/python.exe" tools/export_disease_tree.py
 """
 import argparse, hashlib, io, json, os, re, shutil, sqlite3, sys, time, urllib.error, urllib.parse, urllib.request
 from collections import Counter, defaultdict
@@ -31,8 +31,8 @@ import pyarrow.parquet as pq
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import fidelity as F
 
-CT_DIR = os.environ.get("CLINICAL_TRACKER_DIR", os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")))   # AACT client + credentials only (never copied)
-BRIDGE = os.environ.get("AACT_BRIDGE_DIR", os.path.join(CT_DIR, "AACT_bridge"))       # every static input file lives here
+CT_DIR = os.environ.get("CLINICAL_TRACKER_DIR", r"C:\Users\jwrup\Clinical Tracker")   # AACT client + credentials only (never copied)
+BRIDGE = os.environ.get("AACT_BRIDGE_DIR", r"C:\Users\jwrup\Clinical Tracker\AACT_bridge")       # every static input file lives here
 BRIDGE_IN = os.path.join(BRIDGE, "inputs")
 BULK = os.path.join(BRIDGE_IN, "opentargets")
 TESTS_IN = os.path.join(BRIDGE_IN, "tests")
@@ -808,6 +808,40 @@ def aact_trial_meta(aact, ncts):
     return out
 
 
+APL_RX = re.compile(r"promyelocytic|promyelocitic|\bAPL\b(?!-\d)|PML[-/:]?RARA|t\(15;17\)", re.I)
+APL_NEG_RX = re.compile(r"(?:non[- ]?|other than |except(?: for)? |excluding |exclusion of |without |not )(?:acute )?(?:APL|promyelocytic)", re.I)
+DISEASE_RX = re.compile(r"leuk|AML|myeloid|MDS|myelodysplas|neoplasm|cancer|tumou?r|lymphom|myelom", re.I)
+
+
+def apl_only_trials(aact, ncts):
+    """Trials about APL alone (not AML at large): every AACT disease condition names APL, or the brief title names APL.
+    A negated mention ('AML except APL') never counts. APL gets its own chart; these trials stay out of the AML tree."""
+    cond, title = defaultdict(list), {}
+    for ch in chunks(sorted(ncts), 800):
+        for r in aact.run_query("SELECT nct_id, name FROM ctgov.conditions WHERE nct_id = ANY(%s)", (ch,), limit=500000):
+            cond[r["nct_id"]].append(r["name"] or "")
+        for r in aact.run_query("SELECT nct_id, brief_title, official_title FROM ctgov.studies WHERE nct_id = ANY(%s)", (ch,), limit=100000):
+            title[r["nct_id"]] = (r["brief_title"] or "", r["official_title"] or "")
+    out = set()
+    for n in ncts:
+        dz = [c for c in cond[n] if DISEASE_RX.search(c) or APL_RX.search(c)]
+        bt, ot = title.get(n, ("", ""))
+        if dz and all(APL_RX.search(c) and not APL_NEG_RX.search(c) for c in dz):
+            out.add(n)
+        elif APL_RX.search(bt) and not APL_NEG_RX.search(bt + " " + ot):
+            out.add(n)
+    return out
+
+
+def apl_pair(p):
+    """Same APL-only rule as apl_only_trials, applied to a match/graveyard row's own conditions and title (no AACT call)."""
+    dz = [c for c in (p.get("conditions") or []) if DISEASE_RX.search(c) or APL_RX.search(c)]
+    t = p.get("title") or ""
+    if dz and all(APL_RX.search(c) and not APL_NEG_RX.search(c) for c in dz):
+        return True
+    return bool(APL_RX.search(t)) and not APL_NEG_RX.search(t)
+
+
 def aact_enrich(aact, meta):
     """Adds AACT dates and the lead sponsor to each trial's metadata (the 'year' layer)."""
     ncts = [n for n in meta if NCT_RE.match(n)]
@@ -1326,6 +1360,10 @@ def build(args):
     aact = aact_client()
     scope_ncts = sorted({r[0] for r in cur.execute("""SELECT DISTINCT cr.nct_id FROM indication_reports ir JOIN indications i USING(indication_id)
         JOIN clinical_reports cr USING(report_id) WHERE i.disease_id=? AND cr.nct_id IS NOT NULL""", (args.scope_id,)) if NCT_RE.match(r[0] or "")})
+    # APL-only trials are held out of the AML tree (separate APL chart later); listed in the audit branch.
+    apl_ncts = apl_only_trials(aact, scope_ncts)
+    scope_ncts = [n for n in scope_ncts if n not in apl_ncts]
+    print(f"[apl] held out {len(apl_ncts)} APL-only scope trials", flush=True)
     meta = aact_trial_meta(aact, scope_ncts)
     arms = aact_arms(aact, scope_ncts)
     # sponsor-supplied alternate names (AACT) for strings that still do not resolve; source-tagged in di.alias_via
@@ -1348,6 +1386,9 @@ def build(args):
     sub_trials = aact.run_query(trial_sql, (pat,) * 6, limit=5000)
     sub_meta = {t["nct_id"]: t for t in sub_trials}
     sub_ncts = sorted(t["nct_id"] for t in sub_trials if NCT_RE.match(t["nct_id"]))
+    sub_apl = apl_only_trials(aact, sub_ncts)
+    sub_ncts = [n for n in sub_ncts if n not in sub_apl]
+    apl_ncts |= sub_apl
     sub_arms = aact_arms(aact, sub_ncts)
     di.load_aact_aliases(aact, unresolved_names(sub_arms))
     sub_reg, sub_buckets, sub_comp, sub_seen = build_regimens(sub_ncts, sub_arms, di)
@@ -1710,6 +1751,7 @@ def build(args):
                    [bucket_node("audit:no_arms", "scope trials with no design groups (arms)", buckets["no_arms"], meta),
                     bucket_node("audit:no_links", "scope trials whose arms have no linked interventions", buckets["arms_without_intervention_links"], meta),
                     bucket_node("audit:ctl", "scope trials with only placebo-containing or non-drug arms", buckets["control_or_non_drug_only"], meta),
+                    bucket_node("audit:apl_only", "APL-only trials held out of the AML tree (separate APL chart)", apl_ncts, meta),
                     bucket_node("audit:npm1_unplaced", f"{args.subtype_text} trials with no arms / no links / control-only",
                                 sub_buckets["no_arms"] | sub_buckets["arms_without_intervention_links"] | sub_buckets["control_or_non_drug_only"], sub_meta)])
     branches.append(audit)
@@ -1838,7 +1880,9 @@ def build(args):
     accounted = placed | buckets["no_arms"] | buckets["arms_without_intervention_links"] | buckets["control_or_non_drug_only"]
     n_members = sum(len(d["members"]) for d in roots.values())
     cat_sum = sum(len(v) for v in byc.values())
-    no_src = [d["name"] for d in roots.values() if d["category"] == "APPROVED_AT_SCOPE" and not d["evidence"]]
+    # US gate: the named regulator source is the FDA approval letter plus the US label treatment mention (OT evidence is optional).
+    no_src = [d["name"] for d in roots.values() if d["category"] == "APPROVED_AT_SCOPE"
+              and not (d.get("scope_first_letter") and (d.get("label") or {}).get("treatment_mentions"))]
     bad_nct = [n["name"] for n in all_nodes if n["kind"] == "trial" and not NCT_RE.match(n["name"])]
     golden = json.load(open(os.path.join(TESTS_IN, "aml_golden.json"), encoding="utf-8"))
     dup_ids = len(all_nodes) - len({n["id"] for n in all_nodes})
@@ -1913,8 +1957,9 @@ def build(args):
          his_role.get("setting") == "maintenance" and his_role.get("combination") == "combination required"
          and any("interleukin-2" in p.lower() for p in (his_role.get("partners") or [])),
          f"histamine role={his_role}"),
-        ("revumenib_cedazuridine_decitabine_in_approved", {"REVUMENIB", "CEDAZURIDINE", "DECITABINE"} <= approved_names,
-         f"missing={sorted({'REVUMENIB', 'CEDAZURIDINE', 'DECITABINE'} - approved_names)}; revumenib scope_named_by={rev and rev['scope_named_by']}"),
+        ("revumenib_cedazuridine_approved_decitabine_supplemental", {"REVUMENIB", "CEDAZURIDINE"} <= approved_names
+         and "DECITABINE" in {d["name"] for d in supp_ds},
+         f"missing={sorted({'REVUMENIB', 'CEDAZURIDINE'} - approved_names)}; decitabine supplemental={'DECITABINE' in {d['name'] for d in supp_ds}}"),
     ]
     expectations += [
         ("inqovi_brand_and_2020_us_approval",
@@ -1973,7 +2018,7 @@ def build(args):
         dict(name="every drug lands in exactly one category", ok=cat_sum == len(roots), detail=f"{cat_sum} vs {len(roots)}"),
         dict(name=f"golden: OT-approved records equal your declared {len(want)} drugs", ok=got_golden == want,
              detail=f"missing: {sorted(want - got_golden)}; extra: {sorted(got_golden - want)}"),
-        dict(name="every OT-approved scope drug has a named regulator source", ok=not no_src, detail=str(no_src[:6] or "none")),
+        dict(name="every approved drug has a US label treatment mention and an FDA approval letter naming the scope", ok=not no_src, detail=str(no_src[:6] or "none")),
         dict(name="trial conservation: every scope trial is in a regimen or an audit bucket", ok=accounted == set(scope_ncts),
              detail=f"{len(accounted)} accounted vs {len(scope_ncts)} scope trials"),
         dict(name=f"{args.subtype_text} trial conservation", ok=(set().union(*[set(r['trials']) for r in sub_reg.values()]) | sub_buckets['no_arms'] | sub_buckets['arms_without_intervention_links'] | sub_buckets['control_or_non_drug_only']) == set(sub_ncts),
@@ -2079,7 +2124,7 @@ def build(args):
             "14. Each stage branch under Investigational has a sibling ':discontinued' branch (drug level, live AACT). A drug is discontinued when, at the most-advanced phase any of its scope trials reached, every trial there is Terminated, Withdrawn or Suspended and none remain active (RECRUITING/NOT_YET_RECRUITING/ACTIVE_NOT_RECRUITING/ENROLLING_BY_INVITATION); Completed and Unknown status do not count. The stage label shown is the phase reached before stopping, not a claim the trial is still running."],
         alias_resolutions=dict(sorted(di.alias_via.items())),
         fidelity=fid_summary, invariants=inv, llm_in_data_path=False, runtime_seconds=round(time.time() - t0))
-    attach_semantic(tree)
+    attach_semantic(tree, aact, di)
     from lineage_verify import attach_lineage
     attach_lineage(tree)
     out = os.path.join(ROOT, "data", "tree.json")
@@ -2103,27 +2148,94 @@ def study_node(pid, p):
     attrs = {k: p.get(k) for k in ("nct_id", "title", "phase", "status", "start_date", "relation", "expansion", "central_nct", "decision", "decided_by",
                                     "layer", "study_role", "arm_role", "regimen_key", "primary_outcomes", "regimen_prior", "regimen_next",
                                     "regimen_outcome", "why_stopped", "human_note", "reasons", "flagship_fails",
-                                    "approval_basis", "approved_regimen", "central_exclusion", "approval_conflict")}
+                                    "approval_basis", "approved_regimen", "central_exclusion", "approval_conflict", "demoted_from_approved")}
     attrs["tier"] = p.get("tier")
     return dict(id=f"{pid}:{p['nct_id']}", kind="study", name=f"{p['nct_id']}  ·  {p.get('study_role') or '?'}  ·  {p.get('layer') or '?'}",
                 attrs=attrs, provenance=dict(source="tools/match_pipeline.py run (data/match.json)", basis="hard filters + BM25 + semantic layer V2 + human labels"))
 
 
-def attach_semantic(tree):
+# Approved-regimen fit: a companion trial stays under "Approved regimens" only if it tests the US-labelled setting and product.
+FIT_SETTINGS = {"newly diagnosed", "relapsed/refractory", "maintenance", "consolidation"}
+MAINT_RX = re.compile(r"mainten|post[- ]?remission", re.I)
+# Drugs whose US AML label covers one product of the molecule only (Onureg = oral azacitidine; injectable Vidaza has no US AML label).
+FORMULATION_RX = {"CHEMBL1489": re.compile(r"\boral\b|CC-?486|onureg|tablet", re.I)}
+
+
+def approved_fit(p, drug_attrs, arm_texts):
+    """-> None when the companion trial fits the drug's US-labelled AML use, else the reason it does not."""
+    us = {k for k, src in (drug_attrs.get("approved_for") or {}).items() if any(s.startswith("US label") for s in src)} & FIT_SETTINGS
+    if us:
+        tags = set(p.get("setting_tags") or [])
+        if MAINT_RX.search(p.get("title") or ""):
+            tags.add("maintenance")
+        if not tags & FIT_SETTINGS:
+            return f"setting not stated (US label: {', '.join(sorted(us))})"
+        if not tags & us:
+            return f"setting {', '.join(sorted(tags & FIT_SETTINGS))} (US label: {', '.join(sorted(us))})"
+    frx = FORMULATION_RX.get(drug_attrs.get("chembl_root"))
+    if frx and not frx.search(f"{p.get('title') or ''} {arm_texts}"):
+        return f"other formulation (US AML label: {drug_attrs.get('brand_display') or '?'})"
+    return None
+
+
+STANDARD_CHEMO_RX = re.compile(r"^\s*(standard|intensive|induction|consolidation|conventional|cytotoxic|\s|-|of|care)*\s*(chemotherapy|chemo)\b"
+                               r"|^\s*standard of care\s*$|\b7\s*\+\s*3\b", re.I)
+
+
+def unlisted_partners(nct, croot, regimen_roots, arms, di, skip_roots):
+    """Drug-like interventions sharing an arm with this drug that are not in its regimen key (the key lists recognised scope drugs only)."""
+    extra = set()
+    for a in (arms.get(nct) or {}).values():
+        ids_by_name = {n: di.lookup(n) for t, n in a["ints"] if t in DRUG_LIKE and not re.search(r"placebo|supportive care", n, re.I)}
+        if not any(croot in ids for k, ids in ids_by_name.values() if k in ("one", "combo")):
+            continue
+        for n, (k, ids) in ids_by_name.items():
+            if STANDARD_CHEMO_RX.search(n):  # generic standard chemo counts as a listed partner
+                continue
+            if k in ("one", "combo"):
+                if ids - regimen_roots - skip_roots:
+                    extra.add(n.strip())
+            else:
+                extra.add(n.strip())
+    return sorted(extra)
+
+
+def attach_semantic(tree, aact=None, di=None):
     """Hang the semantic-layer view (data/match.json) under each drug: the central investigational study, then its supplemental
-    studies grouped by relation. Add a Graveyard branch (data/graveyard.json) of pairs that failed a level of the logic."""
+    studies grouped by relation. Add a Graveyard branch (data/graveyard.json) of pairs that failed a level of the logic.
+    With aact + di, companions of an approved regimen are checked against the US label (setting, product) and the trial's arms
+    (unlisted partner drugs) before they are shown as approved-regimen trials."""
     mpath, gpath = os.path.join(ROOT, "data", "match.json"), os.path.join(ROOT, "data", "graveyard.json")
     if not os.path.exists(mpath):
         return
     m = json.load(open(mpath, encoding="utf-8"))
     by_root, exp_root = defaultdict(list), defaultdict(list)
     for p in m["pairs"]:
+        if apl_pair(p):
+            continue
         if p.get("relation"):
             by_root[p["chembl_root"]].append(p)
         elif p.get("expansion"):
             exp_root[p["chembl_root"]].append(p)
     rank = lambda p: (LAYER_ORDER.get(p.get("layer"), 0), PHASE_ORDER.get(p.get("phase") or "", -1), p.get("start_date") or "")
     attached = 0
+    comp_arms, skip_roots, fit_stats = {}, set(), Counter()
+    # label attrs per drug, taken from whichever node carries them (pathway copies of a drug node may not)
+    label_attrs = {}
+
+    def collect(x):
+        at = x.get("attrs") or {}
+        if x.get("kind") == "drug" and at.get("approved_for"):
+            label_attrs.setdefault(at.get("chembl_root"), at)
+        for c in x.get("children") or []:
+            collect(c)
+    collect(tree)
+    if aact is not None and di is not None:
+        comp_arms = aact_arms(aact, sorted({p["nct_id"] for v in by_root.values() for p in v if p["relation"] == "companion"}))
+        for name in SUPPORTIVE_DRUGS:
+            k, ids = di.lookup(name)
+            if k in ("one", "combo"):
+                skip_roots |= ids
 
     def visit(n):
         nonlocal attached
@@ -2161,10 +2273,27 @@ def attach_semantic(tree):
         kids, cid = [cnode], sid + ":central"
         # Regimen groups hang under the central trial: approved regimens (approval trials + companions, one subgroup per
         # FDA-approved regimen, dated by its first approval), then never-approved combinations, one subgroup per regimen.
-        appr = defaultdict(list)
+        appr, other_use = defaultdict(list), defaultdict(list)
         for rel in ("approval_lead", "approval_co_basis", "companion"):
             for p in groups.pop(rel, []):
-                appr[p.get("approved_regimen") or p.get("regimen_key") or "?"].append(p)
+                key = p.get("approved_regimen") or p.get("regimen_key") or "?"
+                if rel == "companion" and di is not None:
+                    reg_roots = set().union(*[di.lookup(x)[1] for x in key.split(" + ") if di.lookup(x)[0] in ("one", "combo")], {croot})
+                    extra = unlisted_partners(p["nct_id"], croot, reg_roots, comp_arms, di, skip_roots)
+                    if extra:
+                        groups["investigational_combination"].append(dict(p, regimen_key=f"{p.get('regimen_key') or key} + unlisted: {', '.join(extra)}",
+                                                                          approved_regimen=None, demoted_from_approved="unlisted partner drug(s) in the drug's arm"))
+                        fit_stats["unlisted_partner"] += 1
+                        continue
+                    arm_txt = " ".join(f"{a['title']} {a.get('desc', '')} " + " ".join(n for _, n in a["ints"]) + " " + " ".join(sum(a["others"].values(), []))
+                                       for a in (comp_arms.get(p["nct_id"]) or {}).values())
+                    why = approved_fit(p, label_attrs.get(croot) or n.get("attrs") or {}, arm_txt)
+                    if why:
+                        other_use[why].append(dict(p, demoted_from_approved=why))
+                        fit_stats["other_setting_or_formulation"] += 1
+                        continue
+                    fit_stats["kept"] += 1
+                appr[key].append(p)
         first = {k: min((p["approval_basis"]["approval_date"] for p in v if p.get("approval_basis")), default=None) for k, v in appr.items()}
         if fda:
             first.setdefault(central.get("approved_regimen"), fda["approval_date"])
@@ -2180,6 +2309,15 @@ def attach_semantic(tree):
                                attrs=dict(regimen=k, first_approval=first.get(k), studies=len(v), ncts=[p["nct_id"] for p in v]),
                                children=[study_node(f"{cid}:approved:{k}", p) for p in sorted(v, key=lambda p: (rel_rank[p["relation"]], p.get("start_date") or ""))[:STUDY_GROUP_CAP]])
                           for k, v in sorted(appr.items(), key=lambda kv: (first.get(kv[0]) or "9999", kv[0]))]))
+        if other_use:
+            cnode["children"].append(dict(id=f"{cid}:other_use", kind="study_set",
+                name=f"Same regimen, other setting/formulation  ({sum(map(len, other_use.values()))} trials)",
+                attrs=dict(note="Companion trials of an approved regimen that do not test the US-labelled AML use (setting or product). "
+                                "Not approval evidence; kept for context.", by_reason={k: len(v) for k, v in other_use.items()}),
+                children=[dict(id=f"{cid}:other_use:{i}", kind="study_set", name=f"{k}  ({len(v)}{', top ' + str(STUDY_GROUP_CAP) if len(v) > STUDY_GROUP_CAP else ''})",
+                               attrs=dict(reason=k, studies=len(v), ncts=[p["nct_id"] for p in v]),
+                               children=[study_node(f"{cid}:other_use:{i}", p) for p in sorted(v, key=rank, reverse=True)[:STUDY_GROUP_CAP]])
+                          for i, (k, v) in enumerate(sorted(other_use.items(), key=lambda kv: -len(kv[1])))]))
         g = sorted(groups.pop("investigational_combination", []), key=rank, reverse=True)
         if g:
             by_reg = defaultdict(list)
@@ -2207,7 +2345,10 @@ def attach_semantic(tree):
         attached += 1
 
     visit(tree)
+    if fit_stats:
+        print(f"[approved-fit] companion placements (per drug node, all branches): {dict(fit_stats)}", flush=True)
     grave = json.load(open(gpath, encoding="utf-8"))["rows"] if os.path.exists(gpath) else []
+    grave = [g for g in grave if not apl_pair(g)]
     if grave:
         lv_nodes = []
         for lv in ("semantic", "hard", "human"):
