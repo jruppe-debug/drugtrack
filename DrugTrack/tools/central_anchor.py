@@ -130,7 +130,10 @@ def run():
         def walk(n):
             a = n.get("attrs") or {}
             if n.get("kind") == "drug":
-                cats[n["name"]] = a.get("category")
+                # drug_key = match.json drug name; product nodes (e.g. DECITABINE/CEDAZURIDINE) carry a display name instead
+                key = a.get("drug_key") or n["name"]
+                if cats.get(key) != "APPROVED_AT_SCOPE":
+                    cats[key] = a.get("category")
             for c in n.get("children") or []:
                 walk(c)
         walk(json.load(open(os.path.join(DATA, "tree.json"), encoding="utf-8")))

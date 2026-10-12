@@ -128,6 +128,7 @@ class DrugIndex:
             for x in (d["tradeNames"] or []):
                 if x["label"] and not re.search(r"component of", x["label"], re.I):
                     self.trade[self.root_of[d["id"]]].setdefault(x["label"].strip().upper(), (x["label"].strip(), x.get("source")))
+        self.product_brands, self.joint_only = {}, set()
         self.combo_products = set()   # frozensets of root ids that a US label defines as ONE product (e.g. Vyxeos = daunorubicin + cytarabine)
         self.aliases, self.alias_via = {}, {}   # exact AACT intervention string -> roots, via a sponsor-supplied other name
 
@@ -164,7 +165,7 @@ class DrugIndex:
         return out
 
     def _lookup1(self, text):
-        found = set()
+        found, hit = set(), text or ""
         for cand in [text] + re.findall(r"\(([^)]+)\)", text or ""):
             for n in (norm(cand), raw(cand)):
                 if n in self.combo:
@@ -172,11 +173,13 @@ class DrugIndex:
                 if n in self.idx:
                     found |= self.idx[n]
             if found:
+                hit = cand
                 break
         if len(found) > 1:
             # Open Targets/ChEMBL synonym lists contain noise (e.g. 'cyclophosphamide' is also a synonym on LORNOXICAM).
             # Tie-break ONLY on an exact match against a member record's own name - never on similarity.
-            base_raw, base_norm = raw(re.sub(r"\(.*?\)", " ", text or "")), norm(text)
+            # Run it on the string that produced the hit: 'Dacogen (decitabine) only' hits via '(decitabine)'.
+            base_raw, base_norm = raw(re.sub(r"\(.*?\)", " ", hit)), norm(hit)
             exact = [r for r in found if base_raw in self._names_of(r) or base_norm in self._names_of(r)]
             if len(exact) == 1:
                 return "one", set(exact)
@@ -739,7 +742,7 @@ def inclusion_part(criteria):
 
 def parse_label_regimens(rec, scope_regex, di, fallback_root):
     """Live US label text -> approved regimens for the scope disease. Deterministic regex; the sentence is kept as evidence."""
-    out, mentions, treatment, products = [], False, False, set()
+    out, mentions, treatment, products, brands, single = [], False, False, set(), {}, set()
     for lab in rec.get("labels", []) if rec.get("status") == "found" else []:
         text = re.sub(r"\s+", " ", lab["indications"])
         base = set()
@@ -750,6 +753,9 @@ def parse_label_regimens(rec, scope_regex, di, fallback_root):
         base = base or {fallback_root}
         if len(base) >= 2:
             products.add(frozenset(base))       # a single label product with several active substances
+            brands.setdefault(frozenset(base), set()).add(lab["brand"])
+        else:
+            single |= base                      # this root is also sold as a single-substance product
         for sent in re.split(r"(?<=[.;])\s+|\(\s*\d+(?:\.\d+)?\s*\)", text):
             if not re.search(scope_regex, sent, re.I):
                 continue
@@ -782,7 +788,8 @@ def parse_label_regimens(rec, scope_regex, di, fallback_root):
                 out.append(dict(ev, roots=frozenset(base.union(*resolved)), parse="all partners together"))
             else:
                 out.append(dict(ev, roots=None, parse=f"partners unresolved: '{ptxt[:80]}'"))
-    return dict(mentions=mentions, treatment_mentions=treatment, regimens=out, products=products)
+    return dict(mentions=mentions, treatment_mentions=treatment, regimens=out, products=products,
+                product_brands=brands, single_roots=single)
 
 
 # ============================================================================ AACT (live)
@@ -914,6 +921,31 @@ def aact_arms(aact, ncts):
     return arms
 
 
+PRODUCT_TEXT_RE = re.compile(r"liposom", re.I)
+
+
+def arm_product(di, roots, hits, others):
+    """The label-defined joint product (e.g. Inqovi = decitabine + cedazuridine, Vyxeos = liposomal daunorubicin + cytarabine)
+    an arm gives, or None. The components stay in roots; the product only marks that they are given as ONE label product.
+      (a) a component exists only inside the joint product (cedazuridine has no single-substance US label), or
+      (b) one intervention string names the product itself: its brand/code resolves to the whole product ('CPX-351', 'ASTX727'),
+          it names a label brand, or it says 'liposomal'. Separate 'Daunorubicin' + 'Cytarabine' entries stay 7+3."""
+    for P in sorted(di.combo_products, key=len, reverse=True):
+        if not P <= roots:
+            continue
+        if P & di.joint_only:
+            return P
+        brands = [b.lower() for b in di.product_brands.get(P, ()) if b]
+        for n, ids in hits:
+            if not P <= ids:
+                continue
+            for x in [n] + list(others.get(n, [])):
+                k1, ids1 = di._lookup1(x)
+                if (k1 == "combo" and P <= ids1) or PRODUCT_TEXT_RE.search(x) or any(b in x.lower() for b in brands):
+                    return P
+    return None
+
+
 def build_regimens(ncts, arms, di):
     """Place each trial by the CONTENTS of its arms. Arm labels are unreliable (VIALE-A's venetoclax arm is typed ACTIVE_COMPARATOR)."""
     regimens = {}
@@ -933,7 +965,7 @@ def build_regimens(ncts, arms, di):
             if any(re.search(r"placebo", n, re.I) for _, n in a["ints"]):
                 comparator[nct].append(f"{a['title']} [{a['type']}]")     # placebo-containing arm = control, not a regimen under test
                 continue
-            roots, unmapped, src = set(), set(), defaultdict(set)
+            roots, unmapped, src, hits = set(), set(), defaultdict(set), []
             for t, n in a["ints"]:
                 if t not in DRUG_LIKE:
                     continue
@@ -941,6 +973,7 @@ def build_regimens(ncts, arms, di):
                 k, ids = di.lookup(n)
                 if k in ("one", "combo"):
                     roots |= ids
+                    hits.append((n, ids))
                     for x in ids:
                         src[x].add(n)
                         src[x].update(a.get("others", {}).get(n, []))
@@ -956,8 +989,9 @@ def build_regimens(ncts, arms, di):
                 named = {x: any(term_in(t2, text) for t2 in (di.arm_terms(x) | src[x])) for x in roots}
                 arm_text_named = {x for x, v in named.items() if v}
                 linked_only = sorted(x for x, v in named.items() if not v) if arm_text_named else []   # only meaningful when the arm text names SOME components
-            key = (tuple(sorted(roots)), tuple(sorted(unmapped)))
-            reg = regimens.setdefault(key, dict(roots=frozenset(roots), unmapped=tuple(sorted(unmapped)), trials={}, flags={}))
+            prod = arm_product(di, roots, hits, a.get("others", {}))
+            key = (tuple(sorted(roots)), tuple(sorted(unmapped)), tuple(sorted(prod or ())))
+            reg = regimens.setdefault(key, dict(roots=frozenset(roots), unmapped=tuple(sorted(unmapped)), product=prod, trials={}, flags={}))
             reg["trials"].setdefault(nct, []).append(f"{a['title']} [{a['type']}]")
             if arm_text_named is not None:
                 reg["flags"].setdefault(nct, []).append(dict(arm=a["title"], named=sorted(arm_text_named), linked_only=linked_only,
@@ -1356,7 +1390,17 @@ def build(args):
 
     # ---- trials at the scope, live metadata, arms -> regimens
     # label-defined multi-substance products let the resolver settle e.g. 'CPX-351' (ambiguous between two components)
-    di.combo_products = set().union(*[d["label"]["products"] for d in cand if d.get("label")])
+    # only products whose every component is a scope candidate (drops homeopathic mixes, Tobramycin/Dexamethasone, ...)
+    cand_roots = {d["root"] for d in cand}
+    di.combo_products = {P for P in set().union(*[d["label"]["products"] for d in cand if d.get("label")]) if P <= cand_roots}
+    di.product_brands = defaultdict(set)
+    for d in cand:
+        for P, bs in (d.get("label") or {}).get("product_brands", {}).items():
+            di.product_brands[P] |= bs
+    # components never sold alone in the US (cedazuridine): any arm containing them is the joint product
+    di.joint_only = set().union(*di.combo_products) - set().union(*[(d.get("label") or {}).get("single_roots", set()) for d in cand]) if di.combo_products else set()
+    print(f"[products] {[(sorted(di.root_name(x) for x in P), sorted(di.product_brands[P])) for P in di.combo_products]} "
+          f"joint-only={[di.root_name(x) for x in di.joint_only]}", flush=True)
     aact = aact_client()
     scope_ncts = sorted({r[0] for r in cur.execute("""SELECT DISTINCT cr.nct_id FROM indication_reports ir JOIN indications i USING(indication_id)
         JOIN clinical_reports cr USING(report_id) WHERE i.disease_id=? AND cr.nct_id IS NOT NULL""", (args.scope_id,)) if NCT_RE.match(r[0] or "")})
@@ -1411,12 +1455,20 @@ def build(args):
         never = sorted(di.root_name(x) for x in rg["roots"] - named)
         return dict(status="verified" if not never else "partial", named=sorted(di.root_name(x) for x in named), linked_only_never_named=never)
 
+    def product_fits(a, rg):
+        """A label regimen holding a joint product (Vyxeos, Inqovi) fits only arms that give that product, and an arm giving
+        the product never fits a label regimen that names just one of its components (IV decitabine + venetoclax)."""
+        p = rg.get("product")
+        if any(q <= a and p != q for q in di.combo_products):
+            return False
+        return not p or not (a & p) or p <= a
+
     def regimen_category(rg):
         if rg["unmapped"]:
             return "UNRESOLVED_COMPONENT", None
-        if rg["roots"] in approved_sets:
+        if rg["roots"] in approved_sets and product_fits(rg["roots"], rg):
             return "APPROVED_REGIMEN_US_LABEL", approved_sets[rg["roots"]][0]
-        backbone = [a for a in approved_sets if a < rg["roots"]]
+        backbone = [a for a in approved_sets if a < rg["roots"] and product_fits(a, rg)]
         if backbone:
             a = max(backbone, key=len)
             ev = dict(backbone=[di.root_name(x) for x in sorted(a)], **approved_sets[a][0])
@@ -1505,17 +1557,41 @@ def build(args):
         out.sort(key=lambda t: (-t[0], t[1]))
         return [p for _, _, p in out]
 
+    PRODUCT_DISPLAY = {"CEDAZURIDINE|DECITABINE": "DECITABINE/CEDAZURIDINE", "CYTARABINE|DAUNORUBICIN": "DAUNORUBICIN/CYTARABINE LIPOSOME"}
+
+    def product_name(P):
+        nm = sorted(di.root_name(x) for x in P)
+        return PRODUCT_DISPLAY.get("|".join(nm), "/".join(nm))
+
+    def in_drug(d, rg):
+        """Regimen belongs to drug d. A product node owns only regimens using that product; a plain component
+        node owns only regimens where it is given on its own (e.g. IV decitabine, not Inqovi)."""
+        if d.get("product"):
+            return rg.get("product") == d["product"]
+        return d["root"] in rg["roots"] and not (rg.get("product") and d["root"] in rg["product"])
+
     def regimen_node(prefix, rg, metas, rel_to=None):
         cat, ev = regimen_category(rg)
-        names = sorted([di.root_name(x) for x in rg["roots"]] + list(rg["unmapped"]), key=str.lower)
+        # A label-defined joint product (e.g. Inqovi = decitabine/cedazuridine) is shown as ONE component, never as
+        # its parts; rel_to is a root or, for a product node, the product's frozenset of roots.
+        P = rg.get("product")
+        excl = rel_to if isinstance(rel_to, frozenset) else {rel_to}
+
+        def disp(skip):
+            xs = [di.root_name(x) for x in rg["roots"] if x not in skip and not (P and x in P)]
+            if P and not (P & skip):
+                xs.append(product_name(P))
+            return sorted(xs + list(rg["unmapped"]), key=str.lower)
+        names = disp(set())
         if rel_to is not None:
-            partners = sorted([di.root_name(x) for x in rg["roots"] if x != rel_to] + list(rg["unmapped"]), key=str.lower)
+            partners = disp(excl)
             label = "+ " + " + ".join(partners) if partners else "monotherapy"
         else:
             label = " + ".join(names)
         tl = sorted(rg["trials"])
         act = [n for n in tl if (metas.get(n) or {}).get("overall_status") in ACTIVE]
-        rkey = hashlib.sha1(("|".join(sorted(rg["roots"])) + "#" + "|".join(rg["unmapped"])).encode()).hexdigest()[:10]
+        rkey = hashlib.sha1(("|".join(sorted(rg["roots"])) + "#" + "|".join(rg["unmapped"])
+                             + ("#P:" + "|".join(sorted(P)) if P else "")).encode()).hexdigest()[:10]
         tnodes = {n: trial_node(f"{prefix}:{rkey}:t", n, metas.get(n) or {}, rg["trials"][n], rg.get("flags", {}).get(n, [])) for n in tl}
         programs = build_programs(f"{prefix}:{rkey}", tl, metas, tnodes)
         # Mechanism, mapped down to the trial: each component drug's ALREADY-COMPUTED mutation_group/mechanism_targets
@@ -1527,6 +1603,7 @@ def build(args):
                                 for x in sorted(rg["roots"]) if x in roots]
         return dict(id=f"{prefix}:reg:{rkey}", kind="regimen", name=f"{label}  ({len(act)} active / {len(tl)})",
                     attrs=dict(regimen=" + ".join(names), category=cat, drugs=[di.root_name(x) for x in sorted(rg["roots"])],
+                               product=product_name(P) if P else None,
                                component_mechanisms=component_mechanisms or None,
                                programs=len(programs), arm_text_check=arm_text_check(rg),
                                us_first_approval_by_drug=({di.root_name(x): (roots[x].get("approval") or {}).get("first_us_approval") for x in sorted(rg["roots"]) if x in roots}
@@ -1559,7 +1636,7 @@ def build(args):
         return out
 
     def drug_node(d, prefix="drug"):
-        regs = [rg for rg in regimens.values() if d["root"] in rg["roots"]]
+        regs = [rg for rg in regimens.values() if in_drug(d, rg)]
         ap = d.get("approval") or {}
         brands = brands_of(d)
         fua = ap.get("first_us_approval")
@@ -1573,7 +1650,7 @@ def build(args):
             bdisp, bbasis = None, "no brand found"
         tl_years = defaultdict(lambda: defaultdict(int))
         for rg in regimens.values():
-            if d["root"] in rg["roots"]:
+            if in_drug(d, rg):
                 for n in rg["trials"]:
                     m = meta.get(n) or {}
                     tl_years[(dstr(m.get("start_date")) or "n/a")[:4]][PHASE_SHORT.get(m.get("phase"), "Ph n/a")] += 1
@@ -1590,10 +1667,14 @@ def build(args):
         inv = {t: inv[t] for t in sorted(inv, key=TAG_ORDER.index)}
         appr = d.get("approved_tags") or {}
         tags = [f"approved: {t}" for t in appr] + [f"investigated: {t}" for t in inv] + sorted(set(appr) | set(inv), key=TAG_ORDER.index)
-        rnodes = sorted((regimen_node(f"{prefix}:{d['root']}", rg, meta, rel_to=d["root"]) for rg in regs),
+        rnodes = sorted((regimen_node(f"{prefix}:{d.get('node_key') or d['root']}", rg, meta, rel_to=d.get("product") or d["root"]) for rg in regs),
                         key=lambda n: (n["attrs"]["category"] != "APPROVED_REGIMEN_US_LABEL", -n["attrs"]["trials_active"], n["name"]))
-        return dict(id=f"{prefix}:{d['root']}", kind="drug", name=d["name"],
-                    attrs=dict(chembl_root=d["root"], category=d["category"], jurisdictions=d["jurisdictions"],
+        return dict(id=f"{prefix}:{d.get('node_key') or d['root']}", kind="drug", name=d.get("display_name") or d["name"],
+                    attrs=dict(chembl_root=d["root"], drug_key=d.get("drug_key") or d["name"], category=d["category"],
+                               product=product_name(d["product"]) if d.get("product") else None,
+                               product_components=sorted(di.root_name(x) for x in d["product"]) if d.get("product") else None,
+                               joint_approval=d.get("joint_approval"), joint_approval_note=d.get("joint_approval_note"),
+                               semantic_roots=d.get("semantic_roots"), jurisdictions=d["jurisdictions"],
                                us_gate=d.get("us_gate"), source_category=d.get("source_category"),
                                reference_jurisdictions=d.get("reference_jurisdictions", []),
                                ot_best_stage=d["best_stage"], ot_approved_at_scope=d["ot_approved"],
@@ -1636,6 +1717,37 @@ def build(args):
                     provenance=dict(source="OT clinical_report + clinical_tracker.db + openFDA", table="indications", key=[m["indication_id"] for m in d["members"]][:3]),
                     children=rnodes)
 
+    # ---- label products: a multi-ingredient US label product (Inqovi, Vyxeos) is one approved unit. A product with a
+    # component that has no single-ingredient label (cedazuridine) takes over that component's node; any other product
+    # gets its own node next to its components, which keep only the regimens that give them on their own.
+    for P in sorted(di.combo_products, key=lambda q: sorted(q)):
+        if not any(rg.get("product") == P for rg in regimens.values()):
+            continue
+        brands = ", ".join(sorted(b for b in di.product_brands.get(P, ()) if b)) or "label product"
+        joint = sorted(P & di.joint_only, key=di.root_name)
+        if joint and joint[0] in roots:
+            d = roots[joint[0]]
+            d.update(product=P, display_name=product_name(P), joint_approval=True,
+                     joint_approval_note=f"{product_name(P)} ({brands}) is approved jointly as one label product. "
+                                         f"{', '.join(di.root_name(x) for x in joint)} has no single-ingredient US label, so its components are not "
+                                         "approved individually for this disease. Trials of the other component given alone are listed under that drug.")
+            continue
+        base_root = min((x for x in P if x in roots), key=di.root_name, default=None)
+        if base_root is None:
+            continue
+        base = roots[base_root]
+        d = dict(base, product=P, display_name=product_name(P), node_key=base_root + "-product", drug_key=base["name"],
+                 category="APPROVED_AT_SCOPE", jurisdictions=["US"], joint_approval=False, semantic_roots=sorted(P),
+                 joint_approval_note=f"{product_name(P)} ({brands}) is one label product with its own US approval. Its components also have "
+                                     "conventional single-ingredient labels; those stay under their own drug nodes with only the regimens "
+                                     "that give them in conventional form.")
+        for x in P:
+            if x in roots:
+                roots[x]["semantic_roots"] = []
+        roots[d["node_key"]] = d
+    print("[products] nodes: " + "; ".join(f"{d['display_name']} joint={d['joint_approval']} cat={d['category']}"
+                                         for d in roots.values() if d.get("product")), flush=True)
+
     byc = defaultdict(list)
     for d in sorted(roots.values(), key=lambda x: x["name"]):
         byc[d["category"]].append(d)
@@ -1660,7 +1772,7 @@ def build(args):
         """True if, at this drug's most-advanced scope-trial phase, every trial is Terminated/
         Withdrawn/Suspended and none remain active. Drug-level, live AACT overall_status."""
         trials = [(PHASE_RANK.get(meta.get(n, {}).get("phase"), -1), meta.get(n, {}).get("overall_status"))
-                  for rg in regimens.values() if d["root"] in rg["roots"] for n in rg["trials"]]
+                  for rg in regimens.values() if in_drug(d, rg) for n in rg["trials"]]
         if not trials:
             return False
         best = max(r for r, _ in trials)
@@ -1878,7 +1990,7 @@ def build(args):
     for rg in regimens.values():
         placed |= set(rg["trials"])
     accounted = placed | buckets["no_arms"] | buckets["arms_without_intervention_links"] | buckets["control_or_non_drug_only"]
-    n_members = sum(len(d["members"]) for d in roots.values())
+    n_members = sum(len(d["members"]) for k, d in roots.items() if not k.endswith("-product"))   # product nodes copy their base's members
     cat_sum = sum(len(v) for v in byc.values())
     # US gate: the named regulator source is the FDA approval letter plus the US label treatment mention (OT evidence is optional).
     no_src = [d["name"] for d in roots.values() if d["category"] == "APPROVED_AT_SCOPE"
@@ -2263,6 +2375,23 @@ def attach_semantic(tree, aact=None, di=None):
             if k in ("one", "combo"):
                 skip_roots |= ids
 
+    def walk_nodes(n):
+        yield n
+        for c in n.get("children") or []:
+            yield from walk_nodes(c)
+
+    # Trials that give a joint product (Inqovi) belong to the product node only. The component that also has its own
+    # label (plain decitabine) keeps just the trials that never name the product.
+    joint_ncts = defaultdict(set)
+    for d in walk_nodes(tree):
+        a = d.get("attrs") or {}
+        if d.get("kind") == "drug" and a.get("joint_approval"):
+            r = a.get("chembl_root")
+            ncts = {c["id"].rsplit(":", 1)[-1] for c in walk_nodes(d) if c.get("kind") == "trial"}
+            ncts |= {p["nct_id"] for p in by_root.get(r, []) + exp_root.get(r, [])}
+            for comp in a.get("product_components") or []:
+                joint_ncts[comp] |= ncts
+
     def visit(n):
         nonlocal attached
         for c in n.get("children") or []:
@@ -2270,7 +2399,10 @@ def attach_semantic(tree, aact=None, di=None):
         if n.get("kind") != "drug":
             return
         croot = (n.get("attrs") or {}).get("chembl_root")
-        exp = sorted(exp_root.get(croot, []), key=rank, reverse=True)
+        sroots = (n.get("attrs") or {}).get("semantic_roots")
+        sroots = [croot] if sroots is None else sroots
+        drop = set() if (n.get("attrs") or {}).get("product") else joint_ncts.get(n.get("name"), set())
+        exp = sorted({p["nct_id"]: p for r in sroots for p in exp_root.get(r, []) if p["nct_id"] not in drop}.values(), key=rank, reverse=True)
         if exp:
             eid = n["id"] + ":exp"
             eg = defaultdict(list)
@@ -2284,7 +2416,13 @@ def attach_semantic(tree, aact=None, di=None):
                                   children=[dict(id=f"{eid}:{k}", kind="study_set", name=f"{k}  ({len(v)}{', top ' + str(STUDY_GROUP_CAP) if len(v) > STUDY_GROUP_CAP else ''})",
                                                  attrs=dict(studies=len(v), ncts=[p["nct_id"] for p in v]),
                                                  children=[study_node(f"{eid}:{k}", p) for p in v[:STUDY_GROUP_CAP]]) for k, v in sorted(eg.items())])] + (n.get("children") or [])
-        rows = by_root.get(croot, [])
+        rows = list({p["nct_id"]: p for r in reversed(sroots) for p in by_root.get(r, []) if p["nct_id"] not in drop}.values())
+        a = n.get("attrs") or {}
+        if a.get("product") and a.get("joint_approval") is False:
+            # A product whose components also have single-ingredient labels (Vyxeos): keep only trials the export placed
+            # under the product's own regimens, so conventional cytarabine or daunorubicin trials stay with those drugs.
+            own = {c["id"].rsplit(":", 1)[-1] for c in walk_nodes(n) if c.get("kind") == "trial"}
+            rows = [p for p in rows if p["nct_id"] in own]
         central = next((p for p in rows if p["relation"] == "central"), None)
         if not central:
             return

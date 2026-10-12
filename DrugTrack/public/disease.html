@@ -39,12 +39,24 @@
   .node.match text { fill:#fff; font-weight:700; }
   .node.match circle { stroke:#fff; stroke-width:3px; }
   .mono { font-family: ui-monospace, monospace; }
+  .tabs { display:flex; gap:4px; }
+  .tabs button.on { background:var(--acc); color:#0f1117; border-color:var(--acc); }
+  .pane { display:none; padding:14px 20px; overflow:auto; height:calc(100vh - 58px); }
+  .pane.on { display:block; }
+  main.off { display:none; }
+  table.grid { border-collapse:collapse; width:100%; font-size:12px; }
+  table.grid th, table.grid td { border-bottom:1px solid var(--line); padding:4px 6px; text-align:left; vertical-align:top; }
+  table.grid th { position:sticky; top:0; background:var(--panel); color:var(--dim); cursor:pointer; }
+  table.grid tr.cut td:first-child { border-left:3px solid var(--bad); }
+  table.grid tr.made td:first-child { border-left:3px solid var(--ok); }
+  .dm { color:var(--ok); }
   @media (max-width:800px){ main{ grid-template-columns:1fr; height:auto; } #wrap{ height:65vh; border-right:none; border-bottom:1px solid var(--line);} }
 </style>
 </head>
 <body>
 <header>
   <h1 id="title">Disease tree</h1>
+  <div class="tabs"><button data-tab="tree" class="on">Tree</button><button data-tab="cut">Did not make the cut</button><button data-tab="regs">All regimens</button></div>
   <div id="meta">Loading...</div>
   <input id="q" type="search" placeholder="Drug, brand, NCT or tag (e.g. venetoclax, maintenance)" />
   <span id="hits" style="color:var(--dim);font-size:12px"></span>
@@ -95,6 +107,8 @@
     </section>
   </aside>
 </main>
+<div id="pane-cut" class="pane"></div>
+<div id="pane-regs" class="pane"></div>
 <script>
 const CAT_TEXT = {
   APPROVED_AT_SCOPE: "US-approved for this disease: the current US label names it as a treatment indication AND an FDA approval letter names it. Other regulators appear only as reference jurisdictions.",
@@ -111,7 +125,7 @@ const CAT_TEXT = {
   STANDARD_OF_CARE: "Established regimen of long-approved agents; no FDA label section 14 trial for this use.",
   UNRESOLVED_COMPONENT: "At least one intervention string could not be resolved to a single Open Targets drug (shown, never dropped)."
 };
-const ATTR_SKIP = new Set(['label', 'label_npm1', 'approval_evidence', 'all_trial_ids', 'members', 'tree_nodes', 'arms', 'comparator_arms', 'approved_as_partner_in', 'drugs', 'unmapped_components', 'ncts', 'component_mechanisms',
+const ATTR_SKIP = new Set(['label', 'joint_approval_note', 'label_npm1', 'approval_evidence', 'all_trial_ids', 'members', 'tree_nodes', 'arms', 'comparator_arms', 'approved_as_partner_in', 'drugs', 'unmapped_components', 'ncts', 'component_mechanisms',
   'brands', 'development_timeline', 'trials', 'link_evidence', 'us_approval_scope_labeled', 'first_us_approval', 'label_expansion_candidates', 'us_first_approval_by_drug', 'approval_date_note', 'brand_basis',
   'reference_pages', 'reference_claims', 'mechanism_targets', 'mutation_group_basis', 'fidelity', 'outside_sources', 'approval_letters', 'scope_indication_first_letter', 'therapeutic_role', 'ema_indications', 'scope_named_by', 'tags', 'tag_basis', 'approved_for', 'investigated_for', 'approval_lineage', 'lineage_ref']);
 const PH = p => ({EARLY_PHASE1:'Ph0/1',PHASE1:'Ph1','PHASE1/PHASE2':'Ph1/2',PHASE2:'Ph2','PHASE2/PHASE3':'Ph2/3',PHASE3:'Ph3',PHASE4:'Ph4'}[p] || 'Ph n/a');
@@ -167,6 +181,8 @@ function label(d) {
   if (d.data.kind === 'drug' && a.category) {
     if (a.brand_display && a.category !== 'INVESTIGATIONAL') t += ' (' + a.brand_display.split(', ').map(b => b.length > 24 ? b.slice(0, 22) + '…' : b).join(', ') + ')';
     const bits = [];
+    if (a.joint_approval) bits.push('joint label product');
+    if (DM[d.data.id]) bits.push(dmTag(DM[d.data.id]));
     if (a.category === 'APPROVED_BROADER_TERM' && a.scope_named_by && !a.scope_named_by.length) {
       // Approved only for a different disease: show what it is actually approved for.
       // Prefer the disease named in the EMA indication text; Open Targets terms ("leukemia") are too broad.
@@ -198,7 +214,26 @@ function label(d) {
   }
   if (d.data.kind === 'study') t += '  ·  ' + PH(a.phase) + '  ·  ' + (a.start_date || 'n/a').slice(0, 4) + (a.decided_by === 'human' ? '  ·  human' : '');
   if (d.data.kind === 'trial') t += '  ·  ' + PH(a.phase) + '  ·  ' + (a.start_year || 'n/a') + (a.status ? '  ·  ' + a.status.toLowerCase().replace(/_/g, ' ') : '');
-  return t.length > 72 ? t.slice(0, 70) + '…' : t;
+  if (d.data.kind !== 'drug' && a.label_evidence) t += '  ·  ' + dmTag(a.label_evidence);
+  const max = (a.label_evidence || DM[d.data.id]) ? 140 : 72;
+  return t.length > max ? t.slice(0, max - 2) + '…' : t;
+}
+
+// DailyMed approval-package tag: label version, publish month, verification status, how the central trial was linked.
+const DM = {};
+const dmTag = L => `DailyMed v${L.version} ${(L.published || '').slice(0, 7)} ${L.status}${(L.central_link || []).length ? ' (' + L.central_link.join('+') + ')' : ''}` +
+  ((L.approval_studies || []).length > 1 ? ` · ${L.approval_studies.length} label studies` : '');
+// A drug node takes only evidence from a central study whose label title names that drug or its brand,
+// so a partner's label (e.g. Inqovi under venetoclax) never tags the wrong drug.
+function indexLabelEvidence(n, drug) {
+  const a = n.attrs || {};
+  if (n.kind === 'drug') drug = n;
+  if (drug && a.label_evidence && a.relation === 'central' && !DM[drug.id]) {
+    const title = (a.label_evidence.title || '').toLowerCase(), da = drug.attrs || {};
+    const names = [drug.name.split(/[ /]/)[0], ...(da.brand_display || '').split(', ').map(b => b.replace(/ \*$/, ''))].filter(Boolean).map(s => s.toLowerCase());
+    if (da.category === 'APPROVED_AT_SCOPE' && names.some(s => title.includes(s))) DM[drug.id] = a.label_evidence;
+  }
+  (n.children || []).forEach(c => indexLabelEvidence(c, drug));
 }
 
 function collapse(d) { if (d._full) { d._children = d._full; d.children = null; delete d._full; } else if (d.children) { d._children = d.children; d.children = null; } }
@@ -267,6 +302,11 @@ function fit() {
   svg.transition().duration(300).call(zoom.transform,
     d3.zoomIdentity.translate(40 - b.x * k, H() / 2 - (b.y + b.height / 2) * k).scale(k));
 }
+
+const hrText = x => esc(x.label ? x.label + ' ' : '') + esc(x.hr) + (x.lo != null ? ` (${esc(x.lo)}-${esc(x.hi)})` : '') + (x.from ? ` <span style="color:var(--dim)">[${esc(x.from)}]</span>` : '');
+const endpointTable = eps => `<table style="width:100%;font-size:11px;margin-top:4px"><tr><th>endpoint</th><th>values</th><th>from</th></tr>` +
+  eps.slice(0, 14).map(x => `<tr><td>${esc(x.endpoint.slice(0, 80))}</td><td>${Object.entries(x.values).map(([k, v]) => esc(k) + ': ' + esc(v)).join('<br>')}</td>` +
+    `<td title="${esc(x.table || x.sentence || '')}">${esc(x.from || '')}${x.text_check ? '<br>' + esc(typeof x.text_check === 'object' ? JSON.stringify(x.text_check) : x.text_check) : ''}</td></tr>`).join('') + `</table>`;
 
 function showDetail(d) {
   const a = d.data.attrs || {}, p = d.data.provenance || {}, box = document.getElementById('detail');
@@ -341,6 +381,30 @@ function showDetail(d) {
       `<br>openFDA: ${(of.label_application_numbers || []).length ? 'label application(s) ' + of.label_application_numbers.map(esc).join(', ') : 'no label found'}` +
       ((of.scope_linked_records || []).length ? '<br>&nbsp;&nbsp;label-linked Drugs@FDA record(s): ' + of.scope_linked_records.map(x => esc(x.application) + ' first approved ' + esc(x.first_approval || 'n/a')).join('; ') : '') +
       (o.name_only_candidates_not_credited && (o.name_only_candidates_not_credited.drugcentral.length || o.name_only_candidates_not_credited.iuphar.length) ? '<br><span style="color:var(--warn)">name-only candidate(s), NOT credited (no identifier matched): DrugCentral ' + o.name_only_candidates_not_credited.drugcentral.length + ', IUPHAR ' + o.name_only_candidates_not_credited.iuphar.length + '</span>' : '') + `</div>`;
+  }
+  if (a.joint_approval_note) h += `<div class="flagbox"><b>joint approval</b><br>${esc(a.joint_approval_note)}</div>`;
+  const LE = a.label_evidence || (d.data.kind === 'drug' && DM[d.data.id]);
+  if (LE) {
+    const L = LE, ef = L.efficacy || {}, src = ef.source || {};
+    h += `<div class="snippet"><b>DailyMed approval-package label (AML)</b> <span class="pill dm">${esc(dmTag(L))}</span><br>` +
+      `${esc(L.title || '')}<br>status <b style="color:${/^verified/.test(L.status) ? 'var(--ok)' : 'var(--warn)'}">${esc(L.status)}</b> &middot; v${esc(L.version)} published ${esc(L.published || 'n/a')}` +
+      (L.days_after_approval != null ? ` (${L.days_after_approval >= 0 ? '+' : ''}${esc(L.days_after_approval)}d vs approval)` : '') +
+      ` &middot; central ${esc(L.central)} linked by ${(L.central_link || []).map(esc).join(', ') || 'none'}` +
+      (L.ignored_pre_approval_versions ? `<br><span style="color:var(--dim)">${esc(L.ignored_pre_approval_versions)} earlier non-AML version(s) ignored</span>` : '') +
+      ((L.aml_indications || []).length ? `<br><i>&ldquo;${esc(L.aml_indications[0].slice(0, 300))}&rdquo;</i>` : '') +
+      ((ef.endpoints || []).length ? `<br><b>central study endpoints</b>` + endpointTable(ef.endpoints) : '') +
+      ((ef.hazard_ratios || []).length ? '<br>HR: ' + ef.hazard_ratios.slice(0, 4).map(hrText).join('; ') : '') +
+      ((L.approval_studies || []).length ? `<br><b>all section 14 studies for this indication (${L.approval_studies.length})</b>` +
+        L.approval_studies.map(s => `<div style="border-top:1px solid var(--line);margin-top:6px;padding-top:4px">` +
+          `<b>${esc(s.nct)}</b> ${esc(s.study || '')} <span class="pill">${esc(s.role)}</span> v${esc(s.version)} ${esc(s.published || '')}` +
+          (s.zip_url ? ` <a href="${esc(s.zip_url)}" target="_blank" style="color:var(--acc)">zip</a>` : '') +
+          (s.combination ? `<br>in combination with: <b>${esc(s.combination)}</b>` : '') +
+          (s.subsection ? `<br><span style="color:var(--dim)">${esc(s.subsection)}</span>` : '') +
+          ((s.hazard_ratios || []).length ? '<br>HR: ' + s.hazard_ratios.map(hrText).join('; ') : '') +
+          ((s.endpoints || []).length ? endpointTable(s.endpoints) : '') + `</div>`).join('') : '') +
+      ((ef.key_results || []).length ? '<br>' + ef.key_results.slice(0, 3).map(s => '&bull; ' + esc(s.slice(0, 240))).join('<br>') : '') +
+      (src.zip_url ? `<br><a href="${esc(src.zip_url)}" target="_blank" style="color:var(--acc)">label zip v${esc(src.version)}</a>` : '') +
+      (L.page_url ? ` &middot; <a href="${esc(L.page_url)}" target="_blank" style="color:var(--acc)">DailyMed</a>` : '') + `</div>`;
   }
   if (a.mutation_group)
     h += `<div class="snippet"><b>mutation/mechanism group: ${esc(a.mutation_group)}</b><br><span style="color:var(--dim)">${esc(a.mutation_group_basis || '')}</span>` +
@@ -592,6 +656,96 @@ function attachScopeLit(tree, sl) {
     ] }]);
 }
 
+// drugs.com "Drugs used to treat Acute Myeloid Leukemia" list (34 rows), mapped to tree generic names.
+const DRUGS_COM = [
+  ['Inqovi', 'DECITABINE/CEDAZURIDINE'], ['cedazuridine / decitabine', 'DECITABINE/CEDAZURIDINE'],
+  ['Venclexta', 'VENETOCLAX'], ['venetoclax', 'VENETOCLAX'], ['cytarabine', 'CYTARABINE'],
+  ['Idhifa', 'ENASIDENIB'], ['enasidenib', 'ENASIDENIB'], ['Tibsovo', 'IVOSIDENIB'], ['ivosidenib', 'IVOSIDENIB'],
+  ['azacitidine', 'AZACITIDINE'], ['Onureg', 'AZACITIDINE'], ['decitabine (off-label)', 'DECITABINE'],
+  ['idarubicin', 'IDARUBICIN'], ['Idamycin PFS', 'IDARUBICIN'], ['Xospata', 'GILTERITINIB'], ['gilteritinib', 'GILTERITINIB'],
+  ['Komzifti', 'ZIFTOMENIB'], ['ziftomenib', 'ZIFTOMENIB'], ['Rydapt', 'MIDOSTAURIN'], ['midostaurin', 'MIDOSTAURIN'],
+  ['vincristine', 'VINCRISTINE'], ['daunorubicin', 'DAUNORUBICIN'], ['Revuforj', 'REVUMENIB'], ['revumenib', 'REVUMENIB'],
+  ['Mylotarg', 'GEMTUZUMAB OZOGAMICIN'], ['gemtuzumab', 'GEMTUZUMAB OZOGAMICIN'],
+  ['Vyxeos', 'DAUNORUBICIN/CYTARABINE LIPOSOME'], ['cytarabine liposomal / daunorubicin liposomal', 'DAUNORUBICIN/CYTARABINE LIPOSOME'],
+  ['Daurismo', 'GLASDEGIB'], ['glasdegib', 'GLASDEGIB'], ['Rezlidhia', 'OLUTASIDENIB'], ['olutasidenib', 'OLUTASIDENIB'],
+  ['quizartinib', 'QUIZARTINIB'], ['Vanflyta', 'QUIZARTINIB'],
+];
+const asList = v => Array.isArray(v) ? v : (v ? [v] : []);
+function walk(n, f, parent) { f(n, parent); (n.children || []).forEach(c => walk(c, f, n)); }
+function sortable(tbl) {
+  tbl.querySelectorAll('th').forEach((th, i) => th.onclick = () => {
+    const rows = [...tbl.tBodies[0].rows], dir = th.dataset.dir = th.dataset.dir === 'a' ? 'd' : 'a';
+    const val = r => { const t = r.cells[i].dataset.v ?? r.cells[i].textContent; return isNaN(+t) || t === '' ? t.toLowerCase() : +t; };
+    rows.sort((x, y) => (val(x) > val(y) ? 1 : val(x) < val(y) ? -1 : 0) * (dir === 'a' ? 1 : -1)).forEach(r => tbl.tBodies[0].appendChild(r));
+  });
+}
+function renderCut() {
+  const drugs = {}, nreg = {};
+  walk(treeData, (n, p) => {
+    if (n.kind === 'drug' && !drugs[n.name]) drugs[n.name] = n;
+    if (n.kind === 'regimen' && p && p.kind === 'drug') nreg[p.name] = (nreg[p.name] || 0) + 1;
+  });
+  const rows = DRUGS_COM.map(([listed, generic]) => {
+    const n = drugs[generic], a = (n && n.attrs) || {}, made = a.category === 'APPROVED_AT_SCOPE';
+    const why = !n ? 'not in tree (no AML trial or Open Targets link)' : made ? 'own US AML label (approval-basis trial central)' :
+      [a.category, a.us_gate || (a.category === 'INVESTIGATIONAL' ? 'no US AML label; AML trials only' : ''), a.phase_label || (a.max_phase != null ? 'max phase ' + a.max_phase : '')].filter(Boolean).join(' · ');
+    return { listed, generic, made, cat: a.category || 'absent', brand: a.brand_display || '', why, dm: DM[n && n.id], nreg: nreg[generic] || 0 };
+  });
+  const cut = rows.filter(r => !r.made), gens = new Set(rows.map(r => r.generic)), cutGens = new Set(cut.map(r => r.generic));
+  document.getElementById('pane-cut').innerHTML =
+    `<p style="color:var(--dim)">drugs.com AML list: ${rows.length} rows = ${gens.size} generics. Made the cut (APPROVED_AT_SCOPE): ${gens.size - cutGens.size}. ` +
+    `<b style="color:var(--bad)">Did not make the cut: ${cut.length} rows / ${cutGens.size} generics</b>. Reason column is read live from tree category + us_gate.</p>` +
+    `<table class="grid"><thead><tr><th>drugs.com row</th><th>tree generic</th><th>status</th><th>tree category</th><th>reason</th><th>regimens</th><th>DailyMed</th></tr></thead><tbody>` +
+    [...cut, ...rows.filter(r => r.made)].map(r => `<tr class="${r.made ? 'made' : 'cut'}"><td>${esc(r.listed)}</td><td>${esc(r.generic)}</td>` +
+      `<td>${r.made ? 'made the cut' : '<b style="color:var(--bad)">did not make the cut</b>'}</td><td>${esc(r.cat)}</td><td>${esc(r.why)}</td>` +
+      `<td data-v="${r.nreg}">${r.nreg}</td><td class="dm">${r.dm ? esc(dmTag(r.dm)) : ''}</td></tr>`).join('') + `</tbody></table>`;
+  sortable(document.querySelector('#pane-cut table'));
+}
+function renderRegs() {
+  const R = new Map();
+  walk(treeData, (n, p) => {
+    if (n.kind !== 'regimen') return;
+    const a = n.attrs || {}, key = a.regimen || n.name.replace(/\s+\(.*$/, '');
+    let r = R.get(key);
+    if (!r) R.set(key, r = { key, drugs: new Set(), cats: new Set(), settings: new Set(), trials: new Set(), parents: new Set(), pathway: new Set(), active: 0, label: '' });
+    asList(a.drugs).forEach(x => r.drugs.add(x));
+    if (a.category) r.cats.add(a.category);
+    asList(a.label_setting).forEach(x => r.settings.add(x));
+    asList(a.all_trial_ids).forEach(x => r.trials.add(x));
+    if (p && p.kind === 'drug') r.parents.add(p.name); else if (p) r.pathway.add(p.name);
+    r.active = Math.max(r.active, +a.trials_active || 0);
+    if (a.approval_evidence && a.approval_evidence.brand && !r.label) r.label = a.approval_evidence.brand;
+    asList(a.label_regimens).forEach(x => r.pathway.add(x));
+  });
+  const regs = [...R.values()].map(r => ({ ...r, n: r.drugs.size || r.key.split(' + ').length }));
+  const byCat = {}, byN = {};
+  regs.forEach(r => { r.cats.forEach(c => byCat[c] = (byCat[c] || 0) + 1); byN[r.n] = (byN[r.n] || 0) + 1; });
+  const pane = document.getElementById('pane-regs');
+  pane.innerHTML = `<p style="color:var(--dim)">${regs.length} distinct regimens/combinations (deduped across parent drugs and pathway placements). ` +
+    `By category: ${Object.entries(byCat).sort((x, y) => y[1] - x[1]).map(([k, v]) => `${esc(k)} ${v}`).join(' · ')}<br>` +
+    `By number of components: ${Object.entries(byN).map(([k, v]) => `${k}-drug ${v}`).join(' · ')}</p>` +
+    `<input id="regq" placeholder="filter regimens (drug, category, setting, NCT)" style="width:360px;margin-bottom:8px"> <span id="regn" style="color:var(--dim)"></span>` +
+    `<table class="grid"><thead><tr><th>regimen</th><th>components</th><th>category</th><th>label setting</th><th>US label</th><th>trials</th><th>active</th><th>tree parents / pathway</th></tr></thead><tbody>` +
+    regs.sort((x, y) => y.trials.size - x.trials.size).map(r => {
+      const approved = [...r.cats].some(c => c === 'APPROVED_REGIMEN_US_LABEL' || c === 'STANDARD_OF_CARE');
+      return `<tr class="${approved ? 'made' : ''}" data-s="${esc([r.key, ...r.cats, ...r.settings, ...r.parents, ...r.pathway, ...r.trials].join(' ').toLowerCase())}">` +
+        `<td>${esc(r.key)}</td><td data-v="${r.n}">${r.n}</td><td>${[...r.cats].map(esc).join('<br>')}</td><td>${[...r.settings].map(esc).join(', ')}</td>` +
+        `<td>${esc(r.label)}</td><td data-v="${r.trials.size}">${r.trials.size}</td><td data-v="${r.active}">${r.active}</td>` +
+        `<td>${[...r.parents, ...[...r.pathway].map(x => 'pathway: ' + x)].map(esc).join('<br>')}</td></tr>`;
+    }).join('') + `</tbody></table>`;
+  const tbl = pane.querySelector('table'), regn = document.getElementById('regn');
+  sortable(tbl);
+  const filt = () => { const s = document.getElementById('regq').value.toLowerCase().trim(); let k = 0;
+    [...tbl.tBodies[0].rows].forEach(r => { const on = !s || s.split(/\s+/).every(w => r.dataset.s.includes(w)); r.style.display = on ? '' : 'none'; k += on; });
+    regn.textContent = `${k} shown`; };
+  document.getElementById('regq').oninput = filt; filt();
+}
+document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('.tabs button').forEach(x => x.classList.toggle('on', x === b));
+  document.querySelector('main').classList.toggle('off', b.dataset.tab !== 'tree');
+  document.querySelectorAll('.pane').forEach(p => p.classList.toggle('on', p.id === 'pane-' + b.dataset.tab));
+});
+
 async function load() {
   treeData = await (await fetch('/api/tree')).json();
   const lit = await (await fetch('/api/lit')).json();
@@ -617,6 +771,8 @@ async function load() {
   zoom = d3.zoom().scaleExtent([0.15, 3]).on('zoom', e => g.attr('transform', e.transform));
   svg.call(zoom);
   attachScopeLit(treeData, scopeLit);
+  indexLabelEvidence(treeData);
+  renderCut(); renderRegs();
   root = d3.hierarchy(treeData);
   root.each(d => { if (d.data.attrs && d.data.attrs.approval_lineage) LINEAGE[d.data.id] = d.data.attrs.approval_lineage; });
   root.x0 = 0; root.y0 = 0;
