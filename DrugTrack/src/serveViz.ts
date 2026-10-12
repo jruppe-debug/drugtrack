@@ -105,6 +105,22 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    // DailyMed SPL figure images cached by tools/dailymed_label.py ({setid}_v{version}/{file}).
+    // Both path parts are whitelisted so the URL cannot leave data/dailymed/versions.
+    const spl = req.url?.match(/^\/spl-img\/([0-9a-f-]{36}_v\d{1,4})\/([A-Za-z0-9._-]{1,120}\.(?:jpe?g|png|gif))$/i);
+    if (spl) {
+      const imgPath = join(ROOT, "data", "dailymed", "versions", spl[1], spl[2]);
+      if (!existsSync(imgPath)) {
+        res.writeHead(404);
+        res.end();
+        return;
+      }
+      const ext = spl[2].split(".").pop()!.toLowerCase();
+      res.writeHead(200, { "Content-Type": ext === "png" ? "image/png" : ext === "gif" ? "image/gif" : "image/jpeg", "Cache-Control": "max-age=86400" });
+      res.end(await readFile(imgPath));
+      return;
+    }
+
     // Playwright link-check results (tools/validate_lit_urls.py), keyed by PMID.
     // Served byte-for-byte like /api/tree.
     if (req.url === "/api/lit") {

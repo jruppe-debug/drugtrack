@@ -48,6 +48,28 @@ def txt(el):
     return " ".join("".join(el.itertext()).split()) if el is not None else ""
 
 
+FOOTNOTE = re.compile(r"[a-z*†‡§¶#]{1,2}")
+
+
+def cell_txt(el):
+    """Table cell text without footnote markers: '<sup>a</sup>' in 'CR<sup>a</sup>+CRh<sup>b</sup>' is dropped."""
+    parts = []
+
+    def go(e):
+        st = "".join(e.itertext()).strip()
+        prev = "".join(parts).rstrip()
+        # digit superscripts are footnotes too ('CR1+CRh2', '4.56'), except exponents: 10^9/L, m^2
+        sup = e.tag == V + "sup" and (FOOTNOTE.fullmatch(st or "-")
+                                      or (re.fullmatch(r"\d{1,2}", st) and not re.search(r"(?:10|m)$", prev)))
+        if not sup:
+            parts.append(e.text or "")
+            for c in e:
+                go(c)
+        parts.append((e.tail or "") if e is not el else "")
+    go(el)
+    return " ".join("".join(parts).split())
+
+
 def pubdate(s):
     return datetime.strptime(s, "%b %d, %Y").date()
 
@@ -96,7 +118,7 @@ def grid(part):
                 if not carry[col][1]:
                     del carry[col]
                 col += 1
-            t, span = txt(c), int(c.get("colspan") or 1)
+            t, span = cell_txt(c), int(c.get("colspan") or 1)
             rs = int(c.get("rowspan") or 1)
             for k in range(span):
                 row.append(t)
