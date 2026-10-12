@@ -151,7 +151,13 @@ def index_tree(tree):
         if m and n["kind"] in ("trial", "study"):
             by_nct.setdefault(m.group(1), []).append(n)
         if n["kind"] == "drug":
-            drugs.setdefault(n["name"].upper(), n["id"])
+            # product nodes show a display name; drug_key keeps the match.json name. A product node of a
+            # non-joint product (Vyxeos) wins over its plain component node, so CPX regimens link to it.
+            key = ((n.get("attrs") or {}).get("drug_key") or n["name"]).upper()
+            if (n.get("attrs") or {}).get("product"):
+                drugs[key] = n["id"]
+            else:
+                drugs.setdefault(key, n["id"])
         for c in n.get("children") or []:
             walk(c)
     walk(tree)
