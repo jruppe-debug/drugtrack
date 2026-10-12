@@ -53,6 +53,50 @@ NEAR_ANCESTOR_MAX = 2       # ancestor terms within this many hops count as "bro
 # supportive/conditioning agents are shown only inside regimens of approved drugs, never as approved drugs themselves.
 BACKBONE_DRUGS = {"CYTARABINE", "DAUNORUBICIN", "IDARUBICIN", "MITOXANTRONE", "DOXORUBICIN", "THIOGUANINE", "ETOPOSIDE", "FLUDARABINE"}
 SUPPORTIVE_DRUGS = {"SARGRAMOSTIM", "FILGRASTIM", "PEGFILGRASTIM", "LENOGRASTIM", "MELPHALAN", "THIOTEPA", "POSACONAZOLE", "METRONIDAZOLE"}
+# Why a drug whose US label mentions AML (or that has an approval signal elsewhere) is not shown as US-approved at the AML scope.
+# Keyed by the first word of the root name. Written to us_gate_rationale on SUPPLEMENTAL / EXCLUDED drugs.
+GATE_RATIONALE = {
+    "DECITABINE": "US label (Dacogen) is for MDS; in AML it appears only as a partner named in the venetoclax label. The oral decitabine/cedazuridine product is approved separately.",
+    "LENOGRASTIM": "G-CSF approved outside the US only; supportive care for neutropenia, not an anti-leukemic treatment.",
+    "METRONIDAZOLE": "Antibiotic used for infection prophylaxis or treatment during AML therapy; not an anti-leukemic treatment.",
+    "POSACONAZOLE": "Antifungal prophylaxis during neutropenia after AML chemotherapy; supportive care, not an anti-leukemic treatment.",
+    "THIOTEPA": "Conditioning agent; US label (Tepadina) is for graft-rejection prevention in pediatric beta-thalassemia HSCT, not AML.",
+    "MITOXANTRONE": "US label names ANLL (legacy wording) for combination induction, but the approval predates modern section 14 AML trials; used as a backbone in 7+3 variants and MEC salvage, so it is shown inside approved-drug regimens only.",
+    "THIOGUANINE": "US label names acute nonlymphocytic leukemia (legacy wording); no section 14 AML trial and rarely used in current AML therapy.",
+    "DOXORUBICIN": "Broad multi-tumor US label lists acute myeloblastic leukemia among many cancers; not a standard AML agent today and no AML-specific approval trial.",
+    "CYTARABINE": "Backbone chemotherapy (7+3, HiDAC, LDAC); its US label names AML, but by design backbone agents are shown only inside approved-drug regimens.",
+    "DAUNORUBICIN": "Backbone anthracycline of 7+3; US label names AML, shown only inside approved-drug regimens by design. The liposomal daunorubicin/cytarabine product (Vyxeos) is approved separately.",
+    "IDARUBICIN": "Backbone anthracycline of 7+3; US label names AML, shown only inside approved-drug regimens by design.",
+    "CYCLOPHOSPHAMIDE": "Legacy catch-all US label lists acute myelogenous and monocytic leukemia, with no FDA approval letter naming AML; in AML it is used only in conditioning or off-label, not as treatment.",
+    "VINCRISTINE": "US label says 'acute leukemia' without naming AML; clinically an ALL agent with no AML indication.",
+    "ARSENIC": "US label is limited to acute promyelocytic leukemia; APL is excluded by the US AML gate.",
+    "TRETINOIN": "US label is limited to acute promyelocytic leukemia; APL is excluded by the US AML gate.",
+    "FILGRASTIM": "Supportive care (neutropenia after AML induction/consolidation chemotherapy); not an anti-leukemic treatment.",
+    "SARGRAMOSTIM": "Supportive care (neutrophil recovery after AML induction chemotherapy); not an anti-leukemic treatment.",
+    "PEGFILGRASTIM": "Supportive care for chemotherapy-induced neutropenia; not an anti-leukemic treatment.",
+    "MERCAPTOPURINE": "US label states it is not effective for AML; it is an ALL maintenance drug.",
+    "ETOPOSIDE": "No US label indication for AML; used off-label in salvage regimens (MEC, FLAG-Ida variants).",
+    "FLUDARABINE": "No US label indication for AML; used in FLAG-based salvage and as a conditioning partner (e.g., with treosulfan).",
+    "CLADRIBINE": "No US label indication for AML (labeled for hairy cell leukemia); used off-label in CLAG regimens.",
+    "CLOFARABINE": "US label is for pediatric relapsed ALL; AML use is off-label.",
+    "BUSULFAN": "US label is for conditioning before transplant in CML; no FDA letter naming AML.",
+    "MELPHALAN": "Conditioning agent; US labels name multiple myeloma, not AML.",
+    "TAGRAXOFUSP": "US label is for blastic plasmacytoid dendritic cell neoplasm (BPDCN), not AML.",
+    "HISTAMINE": "Histamine dihydrochloride (Ceplene) is approved for AML remission maintenance in the EU only; no US approval.",
+    "PONATINIB": "CML/Ph+ ALL drug; no AML indication.",
+    "BOSUTINIB": "CML drug; no AML indication.",
+    "CRISANTASPASE": "Asparaginase for ALL/LBL; no AML indication.",
+    "DEXAMETHASONE": "Corticosteroid; US labels list leukemias only for palliative management, with no AML treatment indication.",
+    "HYDROCORTISONE": "Corticosteroid; US labels list leukemias only for palliative management, with no AML treatment indication.",
+    "METHYLPREDNISOLONE": "Corticosteroid; US labels list leukemias only for palliative management, with no AML treatment indication.",
+    "PREDNISOLONE": "Corticosteroid; US labels list leukemias only for palliative management, with no AML treatment indication.",
+    "PREDNISONE": "Corticosteroid; US labels list leukemias only for palliative management, with no AML treatment indication.",
+    "IMATINIB": "CML/Ph+ ALL drug; no AML indication.",
+    "DASATINIB": "CML/Ph+ ALL drug; no AML indication.",
+}
+# openFDA full-text sweep of US label indications: any drug named there gets a label check even if Open Targets ranks it low.
+US_LABEL_SWEEP = ["acute myeloid leukemia", "acute myelogenous leukemia", "acute nonlymphocytic leukemia",
+                  "acute non-lymphocytic leukemia", "acute myeloblastic leukemia", "acute myelogenous and monocytic leukemia"]
 LABEL_CACHE_VERSION = 3   # v3: labels now carry application numbers, UNII and mechanism_of_action text
 SALT_RE = re.compile(r"^(?P<base>.+?)\s+(?:di|tri|hemi|sesqui)?(?:hydrochloride|hydrobromide|mesylate|mesilate|fumarate|maleate|sodium|potassium|"
                      r"phosphate|sulfate|sulphate|tartrate|citrate|acetate|besylate|tosylate|succinate|malate|anhydrous|monohydrate|hydrate|dihydrate)$", re.I)
@@ -430,6 +474,31 @@ class LabelChecker:
         q = urllib.parse.quote(name, safe="")
         return self._query(name.upper(), "https://api.fda.gov/drug/label.json?search="
                            f"openfda.generic_name:%22{q}%22+openfda.substance_name:%22{q}%22&limit=5")
+
+    def sweep(self, phrases):
+        """Every substance whose US label indications text names one of the phrases (full-text search, all pages).
+        Catches approved drugs that Open Targets ranks below phase 2/3 (e.g. treosulfan) so they still get a label check."""
+        key = "SWEEP:" + "|".join(phrases)
+        c = self.cache.get(key)
+        if c and c.get("v") == LABEL_CACHE_VERSION:
+            return set(c["substances"])
+        q = urllib.parse.quote("indications_and_usage:(" + " OR ".join(f'"{p}"' for p in phrases) + ")", safe="")
+        subs, skip, total = set(), 0, None
+        while total is None or skip < total:
+            try:
+                self.network_calls += 1
+                data = fda_request(f"https://api.fda.gov/drug/label.json?search={q}&limit=100&skip={skip}", self.api_key, 60)
+            except Exception as e:
+                print(f"[labels] sweep stopped at skip={skip}: {type(e).__name__}: {e}", flush=True)
+                return subs                                  # partial result is not cached
+            total = data["meta"]["results"]["total"]
+            for res in data.get("results", []):
+                subs.update(s.upper().split()[0] for s in res.get("openfda", {}).get("substance_name") or [] if s.strip())
+            skip += 100
+            time.sleep(0.25 if self.api_key else 0.6)
+        self.cache[key] = {"v": LABEL_CACHE_VERSION, "fetched_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                           "labels_scanned": total, "substances": sorted(subs)}
+        return subs
 
     def _query(self, key, url):
         c = self.cache.get(key)
@@ -1063,7 +1132,14 @@ def build(args):
 
     # ---- live FDA labels for candidate drugs
     labels = LabelChecker(os.path.join(ROOT, "data", "label_cache.json"), api_key=openfda_key)
+    swept = labels.sweep(US_LABEL_SWEEP)
     cand = [d for d in roots.values() if d["ot_approved"] or STAGE_RANK.get(d["best_stage"], 0) >= STAGE_RANK["PHASE_2_3"] or d["evidence"]]
+    # Sweep-only additions; skip a root that shares its first word with a candidate (e.g. GEMTUZUMAB vs GEMTUZUMAB OZOGAMICIN).
+    have = {d["name"].split()[0] for d in cand}
+    cand += [d for d in roots.values() if d not in cand and d["name"].split()[0] not in have
+             and any(m["name"].upper().split()[0] in swept for m in d["members"])]
+    print(f"[labels] US label sweep: {len(swept)} substances; candidates added only by the sweep: "
+          f"{sorted(d['name'] for d in cand if not (d['ot_approved'] or STAGE_RANK.get(d['best_stage'], 0) >= STAGE_RANK['PHASE_2_3'] or d['evidence']))}", flush=True)
     for d in cand:
         recs = [labels.fetch(m["name"]) for m in d["members"][:3]]
         if d["src"]["unii"]:
@@ -1309,8 +1385,12 @@ def build(args):
         role = (d.get("therapeutic_role") or {}).get("tag") or ""
         if d["category"] == "INVESTIGATIONAL" and not (d["name"] in BACKBONE_DRUGS | SUPPORTIVE_DRUGS):
             d["us_gate"] = None
+            if d["name"].split()[0] in GATE_RATIONALE:  # label names AML but no scope approval; keep the reason visible
+                d["us_label_indicated"], d["us_gate_rationale"] = us_label, GATE_RATIONALE[d["name"].split()[0]]
             continue
-        if d["name"] in SUPPORTIVE_DRUGS or role.startswith(("supportive", "conditioning")):
+        if us_label and us_letter and role.startswith("conditioning") and d["name"] not in SUPPORTIVE_DRUGS:
+            d["us_gate"] = "US label + FDA approval letter name the scope (alloHSCT conditioning)"
+        elif d["name"] in SUPPORTIVE_DRUGS or role.startswith(("supportive", "conditioning")):
             d["us_gate"] = "supportive or conditioning agent (shown only inside approved-drug regimens)"
         elif d["name"] in BACKBONE_DRUGS:
             d["us_gate"] = "backbone chemotherapy (shown only inside approved-drug regimens)"
@@ -1326,6 +1406,9 @@ def build(args):
             d["category"] = "EXCLUDED_NOT_US_SCOPE"
         else:
             d["category"] = "SUPPLEMENTAL"
+        d["us_label_indicated"] = us_label
+        if d["category"] != "APPROVED_AT_SCOPE":
+            d["us_gate_rationale"] = GATE_RATIONALE.get(d["name"].split()[0]) or d["us_gate"]
     print("[us-gate] " + "; ".join(f"{c}={sum(1 for d in roots.values() if d['category'] == c)}"
                                     for c in ("APPROVED_AT_SCOPE", "SUPPLEMENTAL", "EXCLUDED_NOT_US_SCOPE")), flush=True)
     for d in sorted(roots.values(), key=lambda x: (x["category"], x["name"])):
@@ -1675,7 +1758,8 @@ def build(args):
                                product_components=sorted(di.root_name(x) for x in d["product"]) if d.get("product") else None,
                                joint_approval=d.get("joint_approval"), joint_approval_note=d.get("joint_approval_note"),
                                semantic_roots=d.get("semantic_roots"), jurisdictions=d["jurisdictions"],
-                               us_gate=d.get("us_gate"), source_category=d.get("source_category"),
+                               us_gate=d.get("us_gate"), us_gate_rationale=None if d.get("product") else d.get("us_gate_rationale"),
+                               us_label_indicated=d.get("us_label_indicated"), source_category=d.get("source_category"),
                                reference_jurisdictions=d.get("reference_jurisdictions", []),
                                ot_best_stage=d["best_stage"], ot_approved_at_scope=d["ot_approved"],
                                us_label_scope_mention=d.get("us_label_scope_mention"), approved_as_partner_in=d.get("partner_in"),
@@ -1961,9 +2045,9 @@ def build(args):
         group_proposals=[dict(drug=d["name"], proposed=d["group_proposal"]["group"], symbol=d["group_proposal"]["symbol"], families=d["group_proposal"]["families"],
                               total_targets_listed=d["group_proposal"]["n_targets"], reason=d["group_proposal"]["reason"]) for d in roots.values() if d.get("group_proposal")],
         excluded_approved_elsewhere=sorted(d["name"] for d in elsewhere_ds),
-        excluded_not_us_scope=[dict(name=d["name"], source_category=d.get("source_category"), reason=d.get("us_gate"),
+        excluded_not_us_scope=[dict(name=d["name"], source_category=d.get("source_category"), reason=d.get("us_gate"), rationale=d.get("us_gate_rationale"),
                                     reference_jurisdictions=d.get("reference_jurisdictions", [])) for d in byc["EXCLUDED_NOT_US_SCOPE"]],
-        supplemental=[dict(name=d["name"], reason=d.get("us_gate"), partner_in=d.get("partner_in", [])) for d in supp_ds],
+        supplemental=[dict(name=d["name"], reason=d.get("us_gate"), rationale=d.get("us_gate_rationale"), partner_in=d.get("partner_in", [])) for d in supp_ds],
         label_mention=dict(
             approved_gained_by_ontology_terms=sorted(d["name"] for d in cand if d["category"] != "INVESTIGATIONAL" and not d["label"]["treatment_mentions"] and d["label_onto"]["treatment_mentions"]),
             investigational_that_would_become_label_only=sorted(d["name"] for d in cand if d["category"] == "INVESTIGATIONAL" and d["label_onto"]["treatment_mentions"])),

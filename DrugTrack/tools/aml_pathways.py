@@ -26,6 +26,9 @@ def R(name, status, keys=(), note=""):
 VEN_HMA = [("VENETOCLAX", "AZACITIDINE + VENETOCLAX"), ("VENETOCLAX", "DECITABINE + VENETOCLAX")]
 GO_IC = [("GEMTUZUMAB OZOGAMICIN", "GEMTUZUMAB OZOGAMICIN + INTENSIVE CHEMOTHERAPY")]
 CPX = [("DAUNORUBICIN", "DAUNORUBICIN"), ("CYTARABINE", "CYTARABINE")]
+TREO = [("TREOSULFAN", "TREOSULFAN")]
+TREO_SCT = R("Treosulfan + fludarabine conditioning, then allogeneic SCT", "approved", TREO,
+             "label: preparative regimen for alloHSCT in AML or MDS, age >=1 year (MC-FludT.14/L Trial II: age >=50 or HCT-CI >2)")
 
 def fit_post_remission():
     return [
@@ -40,6 +43,7 @@ def fit_post_remission():
         ]),
         ("Post-remission: transplant eligible", [
             R("Allogeneic SCT", "standard"),
+            TREO_SCT,
             R("Allogeneic SCT then maintenance", "investigational", note="FLT3 inhibitor or HMA maintenance after alloSCT"),
         ]),
         ("Post-remission: not transplant eligible", [
@@ -78,18 +82,28 @@ def fit_population(fig, older):
                          + fit_post_remission()),
     ]
 
-UNFIT_POST = [("Post-remission", [R("Continue the same lower-intensity therapy", "standard"),
-                                  R("Allogeneic SCT in selected patients", "standard")])]
+def unfit_post(induction):
+    """Post-remission for the unfit: the approved lower-intensity regimen continues (label dosing: until progression or
+    unacceptable toxicity; gemtuzumab ozogamicin: up to 8 continuation cycles), or alloSCT in selected patients."""
+    cont = [R("Continue: " + r["name"], "approved", r["keys"], "label dosing: treatment continues after response")
+            for r in induction if r["status"] == "approved"]
+    return [("Post-remission", cont or [R("Continue the same lower-intensity therapy", "standard")])]
+
+def unfit_group(name, induction):
+    post = unfit_post(induction)
+    post[0][1].extend([R("Allogeneic SCT in selected patients", "standard"), TREO_SCT])
+    return (name, [("Lower-intensity induction", induction)] + post)
+
 UNFIT = [
-    ("IDH1-mutated", [("Lower-intensity induction", [
+    unfit_group("IDH1-mutated", [
         R("HMA + venetoclax", "approved", VEN_HMA),
         R("Azacitidine + ivosidenib", "approved", [("IVOSIDENIB", "AZACITIDINE + IVOSIDENIB")]),
         R("Ivosidenib", "approved", [("IVOSIDENIB", "IVOSIDENIB")], "newly diagnosed, age >=75 or comorbidities"),
-    ])] + UNFIT_POST),
-    ("IDH2-mutated", [("Lower-intensity induction", [R("HMA + venetoclax", "approved", VEN_HMA)])] + UNFIT_POST),
-    ("FLT3-mutated", [("Lower-intensity induction", [R("HMA + venetoclax", "approved", VEN_HMA),
-                                                    R("HMA + venetoclax + FLT3 inhibitor", "investigational")])] + UNFIT_POST),
-    ("No targetable lesion", [("Lower-intensity induction", [
+    ]),
+    unfit_group("IDH2-mutated", [R("HMA + venetoclax", "approved", VEN_HMA)]),
+    unfit_group("FLT3-mutated", [R("HMA + venetoclax", "approved", VEN_HMA),
+                                 R("HMA + venetoclax + FLT3 inhibitor", "investigational")]),
+    unfit_group("No targetable lesion", [
         R("HMA + venetoclax", "approved", VEN_HMA),
         R("Low-dose cytarabine + venetoclax", "approved", [("VENETOCLAX", "LOW-DOSE CYTARABINE + VENETOCLAX")],
           "US label; not drawn in paper fig 4"),
@@ -99,12 +113,12 @@ UNFIT = [
           "US label; not drawn in paper fig 4; check label section 14 for the partner"),
         R("Gemtuzumab ozogamicin monotherapy", "approved", [("GEMTUZUMAB OZOGAMICIN", "GEMTUZUMAB OZOGAMICIN")],
           "label: newly diagnosed CD33-positive AML unfit for intensive chemotherapy (AML-19)"),
-    ])] + UNFIT_POST),
-    ("TP53-mutated", [("Lower-intensity induction", [R("HMA +/- venetoclax", "investigational"),
-                                                    R("Clinical trial", "investigational")])] + UNFIT_POST),
+    ]),
+    unfit_group("TP53-mutated", [R("HMA +/- venetoclax", "investigational"),
+                                 R("Clinical trial", "investigational")]),
 ]
 
-RR_POST = [("After remission", [R("Allogeneic SCT if eligible", "standard")])]
+RR_POST = [("After remission", [R("Allogeneic SCT if eligible", "standard"), TREO_SCT])]
 RR = [
     ("IDH1-mutated", [("Salvage", [R("Ivosidenib", "approved", [("IVOSIDENIB", "IVOSIDENIB")]),
                                    R("Olutasidenib", "approved", [("OLUTASIDENIB", "OLUTASIDENIB")])])] + RR_POST),
@@ -135,6 +149,13 @@ POPULATIONS = [
     ("rr", "Relapsed or refractory", 5, RR),
 ]
 # APL is kept for its own chart and stays out of the AML pathway: ("apl", "Acute promyelocytic leukemia (APL)", None, APL)
+
+# Pathway layer -> line of therapy, used to group approved drugs by where the pathway places them.
+LINE = {"Induction": "1L intensive induction", "Lower-intensity induction": "1L lower-intensity induction",
+        "Post-remission: favorable risk": "1L consolidation", "Post-remission: not transplant eligible": "1L consolidation / maintenance",
+        "Maintenance": "1L maintenance", "Post-remission": "1L continued lower-intensity therapy",
+        "Post-remission: transplant eligible": "alloHSCT conditioning", "After remission": "alloHSCT conditioning",
+        "Salvage": "R/R salvage", "Response assessment": "1L response assessment"}
 
 CATEGORY = {"approved": "APPROVED_REGIMEN_US_LABEL", "standard": "STANDARD_OF_CARE", "investigational": "INVESTIGATIONAL_REGIMEN"}
 
@@ -237,6 +258,26 @@ def attach_pathways(tree, s14_path=S14):
     pipeline = dict(id="branch:pipeline", kind="branch", name="Drug pipeline by phase",
                     attrs=dict(note="Previous disease -> phase -> drug -> trial view"), provenance={}, children=old)
     tree["children"] = [pathway, pipeline]
+    # Line-of-therapy grouping on each approved drug node, derived from the approved pathway regimens that link it.
+    lines = {}
+    for pop in pops:
+        for g in pop["children"]:
+            for ph in g["children"]:
+                for r in ph["children"]:
+                    if r["attrs"]["pathway_status"] != "approved":
+                        continue
+                    for nid in r["attrs"]["tree_nodes"]:
+                        e = lines.setdefault(nid, dict(lines=set(), placements=[]))
+                        sct = "conditioning" in r["name"].lower()  # a conditioning regimen is its own layer wherever it sits
+                        e["lines"].add("alloHSCT conditioning" if sct else LINE.get(ph["name"], ph["name"]))
+                        e["placements"].append(f"{pop['name']} > {g['name']} > {ph['name']} > {r['name']}")
+    def tag(n):
+        if n["kind"] == "drug" and n["id"] in lines:
+            n["attrs"]["line_of_therapy"] = sorted(lines[n["id"]]["lines"])
+            n["attrs"]["pathway_placements"] = lines[n["id"]]["placements"]
+        for c in n.get("children") or []:
+            tag(c)
+    tag(pipeline)
     tree.setdefault("meta", {}).setdefault("counts", {})["pathway"] = dict(unlinked_approved=sorted(set(unlinked)))
     return unlinked
 
