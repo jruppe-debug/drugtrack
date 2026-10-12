@@ -194,7 +194,8 @@ function label(d) {
     } else if (a.category === 'APPROVED_BROADER_TERM') bits.push('broader term');
     if (a.therapeutic_role && a.therapeutic_role.tag) bits.push(a.therapeutic_role.tag.length > 70 ? a.therapeutic_role.tag.slice(0, 68) + '…' : a.therapeutic_role.tag);
     if (a.category === 'LABEL_ONLY') bits.push('label-only');
-    if (a.category === 'SUPPLEMENTAL') bits.push('supplemental' + (a.us_gate ? ': ' + a.us_gate.split(' (')[0] : ''));
+    if (a.category === 'SUPPLEMENTAL') bits.push('supplemental' + (a.us_gate ? ': ' + a.us_gate.split(' (')[0] : '') + (a.us_label_indicated ? ' (US AML label)' : ''));
+    if ((a.line_of_therapy || []).length) bits.push(a.line_of_therapy.join(' / '));
     if (a.reference_jurisdictions && a.reference_jurisdictions.length) bits.push('ref: ' + a.reference_jurisdictions.join('/'));
     if (a.category === 'INVESTIGATIONAL' && a.ot_best_stage) bits.push(a.ot_best_stage.replace('PHASE_', 'P'));
     if (a.approved_as_partner_in && a.approved_as_partner_in.length) bits.push('partner in approved regimen');
@@ -319,6 +320,18 @@ function showDetail(d) {
   h += `</dl>`;
   if (a.category && CAT_TEXT[a.category]) h += `<div class="flagbox"><b>${esc(a.category)}</b><br>${esc(CAT_TEXT[a.category])}</div>`;
   if (a.reason) h += `<div class="flagbox"><b>${esc(a.reason)}</b></div>`;
+  if (a.us_gate_rationale) h += `<div class="flagbox"><b>Why not an approved drug here</b>${a.us_label_indicated ? ' <span style="color:var(--dim)">(US label names AML)</span>' : ''}<br>${esc(a.us_gate_rationale)}</div>`;
+  if ((a.line_of_therapy || []).length) h += `<div class="snippet"><b>line of therapy</b>: ${a.line_of_therapy.map(esc).join(', ')}` +
+    ((a.pathway_placements || []).length ? `<br><span style="color:var(--dim)">${a.pathway_placements.map(esc).join('<br>')}</span>` : '') + `</div>`;
+  const ET = a.efficacy_tag;
+  if (ET) {
+    const ab = ET.approval || {};
+    h += ET.status === 'missing' ? `<div class="flagbox"><b>efficacy</b>: no US label evidence attached</div>` :
+      `<div class="snippet"><b>efficacy</b> <span style="color:var(--dim)">(${esc(ET.status)}${ab.nct ? ' · ' + esc(ab.nct) : ''}${ab.approval_date ? ' · approved ' + esc(ab.approval_date) : ''})</span>` +
+      (ET.headline ? `<br>${esc(ET.headline)}` : '') +
+      ((ET.endpoints || []).length ? `<br><span style="color:var(--dim)">label endpoints: ${ET.endpoints.map(esc).join(', ')}</span>` : '') +
+      (ET.page_url ? `<br><a href="${esc(ET.page_url)}" target="_blank" style="color:var(--acc)">${esc(ET.label || 'DailyMed label')}${ET.version ? ' v' + esc(ET.version) : ''}</a>` : '') + `</div>`;
+  }
   if ((a.tree_nodes || []).length) h += `<div class="snippet"><a href="#" onclick="revealNodes(${esc(JSON.stringify(a.tree_nodes))});return false" style="color:var(--acc)">show ${d.data.kind === 'regimen' ? 'drug and all its trials' : 'this trial'} in drug pipeline tree</a></div>`;
   if (d.data.kind === 'article' && a.url) h += `<div class="snippet"><a href="${esc(a.url)}" target="_blank" style="color:var(--acc)">PubMed ${esc(a.pmid)}</a></div>`;
   if (d.data.kind === 'lit' && a.pubmed_url) h += `<div class="snippet"><a href="${esc(a.pubmed_url)}" target="_blank" style="color:var(--acc)">run query on PubMed</a></div>`;
@@ -688,7 +701,7 @@ function renderCut() {
   const rows = DRUGS_COM.map(([listed, generic]) => {
     const n = drugs[generic], a = (n && n.attrs) || {}, made = a.category === 'APPROVED_AT_SCOPE';
     const why = !n ? 'not in tree (no AML trial or Open Targets link)' : made ? 'own US AML label (approval-basis trial central)' :
-      [a.category, a.us_gate || (a.category === 'INVESTIGATIONAL' ? 'no US AML label; AML trials only' : ''), a.phase_label || (a.max_phase != null ? 'max phase ' + a.max_phase : '')].filter(Boolean).join(' · ');
+      [a.category, a.us_gate_rationale || a.us_gate || (a.category === 'INVESTIGATIONAL' ? 'no US AML label; AML trials only' : ''), a.phase_label || (a.max_phase != null ? 'max phase ' + a.max_phase : '')].filter(Boolean).join(' · ');
     return { listed, generic, made, cat: a.category || 'absent', brand: a.brand_display || '', why, dm: DM[n && n.id], nreg: nreg[generic] || 0 };
   });
   const cut = rows.filter(r => !r.made), gens = new Set(rows.map(r => r.generic)), cutGens = new Set(cut.map(r => r.generic));

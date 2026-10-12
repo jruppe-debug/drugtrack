@@ -16,3 +16,4 @@ data/*.err
 __pycache__/
 *.pyc
 .env.example
+data/dailymed/
