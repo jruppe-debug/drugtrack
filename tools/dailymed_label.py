@@ -577,6 +577,12 @@ def build():
     pairs = json.load(open(os.path.join(DATA, "match.json"), encoding="utf-8"))["pairs"]
     central = {p["drug"]: p["nct_id"] for p in pairs if p.get("relation") == "central"}
     anchors = json.load(open(os.path.join(DATA, "central_anchor.json"), encoding="utf-8"))["drugs"]
+    # match.json can predate a new anchor (drug newly promoted by the US gate): use the earliest anchored trial then.
+    for d, a in anchors.items():
+        ancs = sorted(a.get("anchors") or [], key=lambda x: x.get("approval_date") or "")
+        if ancs and central.get(d) not in {x["nct"] for x in ancs}:
+            print(f"[central] {d}: match.json central {central.get(d)} is not anchored; using {ancs[0]['nct']}", flush=True)
+            central[d] = ancs[0]["nct"]
     dm = json.load(open(os.path.join(DATA, "dailymed_s14.json"), encoding="utf-8"))["drugs"]
     aliases = aact_aliases([central[d] for d in dm if central.get(d)])
     out = {}
@@ -623,10 +629,11 @@ def attach_label_evidence(tree, path=OUT):
     """Put label evidence on every central study node and every pathway trial node of the same NCT."""
     if not os.path.exists(path):
         return 0
-    by_nct = {}
+    by_nct, by_drug = {}, {}
     for drug, e in json.load(open(path, encoding="utf-8"))["drugs"].items():
         if e.get("approval_basis"):
             by_nct.setdefault(e["central"], compact(e))
+            by_drug[drug] = e
     hits = 0
 
     def walk(n):
@@ -641,7 +648,73 @@ def attach_label_evidence(tree, path=OUT):
         for c in n.get("children") or []:
             walk(c)
     walk(tree)
+    tag_drugs(tree, by_drug)
     return hits
+
+
+HEADLINE = re.compile(r"hazard ratio|\bHR\b|median (?:OS|EFS|overall|event|survival)|CR(?:/CRh| or CRh| rate)|superior", re.I)
+NOT_EFFICACY = re.compile(r"time to|follow-up|eligib|transplant|HSCT|\bSCT\b|duration|did so within", re.I)
+# endpoint rows in label tables, best first: survival, then response
+PRIMARY_ROWS = [re.compile(p, re.I) for p in (
+    r"^median (?:OS|overall survival)", r"^median EFS|^median event", r"hazard ratio",
+    r"^CR\s*\+\s*CRh|^CR/CRh|^CR or CRh", r"^CR\b(?!h)", r"^CRc|^composite")]
+
+
+def short_endpoint(s):
+    """Drop a footnote glued to a table row name: 'CR CR was defined as ...' -> 'CR', 'Median DORDOR was ...' -> 'Median DOR'."""
+    if len(s) <= 40:
+        return s
+    for i in range(1, len(s)):
+        if s[i].isupper() and (s[i - 1].isalnum() or s[i - 1] in " )"):
+            tok = re.match(r"[A-Za-z]+", s[i:]).group()
+            if tok in s[:i]:
+                return s[:i].strip()
+    return s
+
+
+def headline_of(ef, kr):
+    """Best efficacy sentence: a primary endpoint row from the label table, else a hazard ratio, else a key result."""
+    rows = [dict(x, endpoint=short_endpoint(x.get("endpoint") or "")) for x in ef.get("endpoints") or []]
+    rows = [x for x in rows if x.get("values") and not NOT_EFFICACY.search(x["endpoint"])]
+    for p in PRIMARY_ROWS:
+        x = next((x for x in rows if p.search(x["endpoint"])), None)
+        if x:
+            vs = list(x["values"].items())
+            if len({v for _, v in vs}) == 1 and len(vs) > 1:
+                vs = vs[:1]  # a between-arm statistic repeated in each arm column
+            return x["endpoint"] + ": " + "; ".join(" ".join(k.split()) + ": " + v for k, v in vs)
+    hr = ef.get("hazard_ratios") or []
+    if hr:
+        h = hr[0]
+        if isinstance(h, str):
+            return h
+        return f"{h.get('label', 'HR')}: HR {h.get('hr')} (95% CI {h.get('lo')}, {h.get('hi')})"
+    good = [s for s in kr if not NOT_EFFICACY.search(s)]
+    return next((s for s in good if HEADLINE.search(s)), good[0] if good else (kr[0] if kr else None))
+
+
+def tag_drugs(tree, by_drug):
+    """Drug-level efficacy tag: the approval-basis trial's label endpoints and a headline result, for each approved drug."""
+    def walk(n):
+        a = n.get("attrs") or {}
+        if n.get("kind") == "drug" and a.get("category") == "APPROVED_AT_SCOPE":
+            parts = set(re.split(r"[/ ]", n["name"]))
+            e = next((v for k, v in by_drug.items() if k.split()[0] in parts), None)
+            if e:
+                ef = e.get("efficacy") or {}
+                kr = e.get("key_results") or ef.get("key_results") or []
+                a["efficacy_tag"] = dict(
+                    status=e.get("status"), central=e.get("central"), label=e.get("title"), version=e.get("version"),
+                    published=e.get("published"), page_url=e.get("page_url"),
+                    approval=e.get("approval_basis"),
+                    endpoints=[short_endpoint(x.get("endpoint") or "") for x in ef.get("endpoints") or []][:8],
+                    hazard_ratios=(ef.get("hazard_ratios") or [])[:4],
+                    headline=headline_of(ef, kr))
+            else:
+                a["efficacy_tag"] = dict(status="missing")
+        for c in n.get("children") or []:
+            walk(c)
+    walk(tree)
 
 
 if __name__ == "__main__":
