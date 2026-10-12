@@ -51,12 +51,32 @@
   table.grid tr.made td:first-child { border-left:3px solid var(--ok); }
   .dm { color:var(--ok); }
   @media (max-width:800px){ main{ grid-template-columns:1fr; height:auto; } #wrap{ height:65vh; border-right:none; border-bottom:1px solid var(--line);} }
+  .finder { display:grid; grid-template-columns:minmax(260px,340px) 1fr; gap:18px; }
+  @media (max-width:800px) { .finder { grid-template-columns:1fr; } }
+  .finder fieldset { border:1px solid var(--line); border-radius:6px; margin:0 0 10px; padding:6px 10px; }
+  .finder legend { color:var(--dim); font-size:12px; }
+  .fopt { display:inline-block; margin:3px 8px 3px 0; padding:4px 8px; border:1px solid var(--line); border-radius:14px; font-size:13px; cursor:pointer; }
+  .fopt.on { border-color:var(--acc); color:var(--acc); }
+  .fopt input { display:none; }
+  .fdim { color:var(--dim); font-size:12px; }
+  .fsum { background:var(--panel); padding:8px 10px; border-radius:6px; margin-bottom:10px; }
+  .fgroup h3 { font-size:15px; margin:14px 0 6px; color:var(--acc); }
+  .fphase h4 { font-size:13px; margin:8px 0 4px; }
+  .freg { background:var(--panel); border-left:3px solid var(--line); padding:6px 10px; margin-bottom:6px; border-radius:4px; }
+  .fdrug { margin:4px 0 0 12px; font-size:13px; }
+  .fdrug.other { border-left:2px dashed var(--warn); padding-left:6px; }
+  .fwarn { color:var(--warn); font-size:12px; }
+  .fhidden { color:var(--bad); font-size:12px; margin:2px 0 6px; }
+  .fbadge { font-size:11px; padding:1px 6px; border-radius:8px; border:1px solid var(--line); text-transform:uppercase; }
+  .fbadge.approved { color:var(--ok); border-color:var(--ok); }
+  .fbadge.standard { color:var(--acc); border-color:var(--acc); }
+  .fbadge.investigational { color:var(--warn); border-color:var(--warn); }
 </style>
 </head>
 <body>
 <header>
   <h1 id="title">Disease tree</h1>
-  <div class="tabs"><button data-tab="tree" class="on">Tree</button><button data-tab="cut">Did not make the cut</button><button data-tab="regs">All regimens</button></div>
+  <div class="tabs"><button data-tab="tree" class="on">Tree</button><button data-tab="cut">Did not make the cut</button><button data-tab="regs">All regimens</button><button data-tab="finder">Treatment finder</button></div>
   <div id="meta">Loading...</div>
   <input id="q" type="search" placeholder="Drug, brand, NCT or tag (e.g. venetoclax, maintenance)" />
   <span id="hits" style="color:var(--dim);font-size:12px"></span>
@@ -109,6 +129,7 @@
 </main>
 <div id="pane-cut" class="pane"></div>
 <div id="pane-regs" class="pane"></div>
+<div id="pane-finder" class="pane"></div>
 <script>
 const CAT_TEXT = {
   APPROVED_AT_SCOPE: "US-approved for this disease: the current US label names it as a treatment indication AND an FDA approval letter names it. Other regulators appear only as reference jurisdictions.",
@@ -753,11 +774,105 @@ function renderRegs() {
     regn.textContent = `${k} shown`; };
   document.getElementById('regq').oninput = filt; filt();
 }
-document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => {
+// Treatment finder: client port of tools/aml_situations.py resolve(); rules come from treeData.finder.
+const FA = { markers: [] };
+const fMatch = (rule, ans) => Object.entries(rule).every(([k, v]) => Array.isArray(v) ? v.includes(ans[k]) : ans[k] === v);
+function fMarker(rule, m, cd33) {
+  if (rule.any && rule.any.length && !rule.any.some(x => m.has(x))) return false;
+  if ((rule.none || []).some(x => m.has(x))) return false;
+  if (rule.cd33_not && cd33 === rule.cd33_not) return false;
+  return true;
+}
+function fResolve(fd, ans) {
+  const pr = fd.population_rules.find(p => fMatch(p.when, ans));
+  if (!pr) return null;
+  const m = new Set(ans.markers || []), P = fd.populations[pr.population];
+  const eln = fd.eln2022.find(e => fMarker(e.rule, m));
+  const ok = g => g.phases.map(ph => {
+    const regs = ph.regimens.filter(r => !r.requires || fMarker(r.requires, m, ans.cd33));
+    return { ...ph, regimens: regs, hidden: ph.regimens.filter(r => !regs.includes(r)).map(r => r.name + ': ' + r.requires.why) };
+  });
+  const G = Object.entries(P.groups);
+  let primary = G.filter(([, g]) => g.rule && fMarker(g.rule, m)).map(([n, g]) => ({ group: n, phases: ok(g) }));
+  const dflt = G.find(([, g]) => g.default);
+  let agnostic = null;
+  if (dflt && !primary.length) primary = [{ group: dflt[0], phases: ok(dflt[1]) }];
+  else if (dflt) {
+    const seen = new Set(primary.flatMap(g => g.phases.flatMap(ph => ph.regimens.map(r => r.name))));
+    const phases = ok(dflt[1]).map(ph => ({ ...ph, regimens: ph.regimens.filter(r => r.status === 'approved' && !seen.has(r.name)), hidden: [] })).filter(ph => ph.regimens.length);
+    if (phases.length) agnostic = { group: dflt[0] + ' (mutation-agnostic approved options)', phases };
+  }
+  return { population: pr.population, title: P.title, source: P.source, eln, primary, agnostic };
+}
+function fDrug(d) {
+  const e = d.efficacy, nm = `<b>${esc(d.name)}</b>${d.brand ? ' (' + esc(d.brand) + ')' : ''}`;
+  if (!e) return `<div class="fdrug">${nm} <span class="fdim">no label efficacy tag</span></div>`;
+  const other = e.applies_to_this_regimen === false;
+  return `<div class="fdrug${other ? ' other' : ''}">${nm}` +
+    (other ? ` <span class="fwarn">efficacy from ${esc(e.approved_regimen || 'another regimen')}, not this regimen</span>` : '') +
+    `<div>${esc(e.headline || '')}</div>` +
+    (e.hazard_ratios && e.hazard_ratios.length ? `<div class="fdim">HR: ${e.hazard_ratios.map(esc).join(' · ')}</div>` : '') +
+    (e.endpoints && e.endpoints.length ? `<div class="fdim">endpoints: ${e.endpoints.map(esc).join(' · ')}</div>` : '') +
+    `<div class="fdim">${e.trial ? 'trial ' + esc(e.trial) + ' · ' : ''}${e.page_url ? `<a href="${esc(e.page_url)}" target="_blank" rel="noopener">DailyMed</a>` : 'DailyMed'}` +
+    `${e.version != null ? ' v' + esc(e.version) : ''}${e.approval_date ? ' · approved ' + esc(e.approval_date) : ''} · ${esc(e.status || '')}</div></div>`;
+}
+function fGroup(g) {
+  return `<div class="fgroup"><h3>${esc(g.group)}</h3>` + g.phases.filter(ph => ph.regimens.length || ph.hidden.length).map(ph =>
+    `<div class="fphase"><h4>${esc(ph.phase)}${ph.context ? ` <span class="fdim">· ${esc(ph.context)}</span>` : ''}</h4>` +
+    ph.regimens.map(r => `<div class="freg"><span class="fbadge ${esc(r.status)}">${esc(r.status)}</span> <b>${esc(r.name)}</b>` +
+      (r.note ? ` <span class="fdim">${esc(r.note)}</span>` : '') +
+      (r.label_regimens && r.label_regimens.length ? `<div class="fdim">US label regimens: ${r.label_regimens.map(esc).join(' · ')}</div>` : '') +
+      (r.hemonc ? `<div class="fdim">HemOnc: ${esc(r.hemonc.concept_name || '')} ${esc(r.hemonc.concept_code || '')}</div>` : '') +
+      r.drugs.map(fDrug).join('') +
+      (r.trials.length ? `<details><summary class="fdim">${r.trials.length} basis trial(s)</summary>${r.trials.map(t => `<div class="fdim">${esc(t.role)} ${esc(t.nct)} ${esc(t.phase || '')}: ${esc(t.title || '')}</div>`).join('')}</details>` : '') +
+      `</div>`).join('') +
+    (ph.hidden.length ? `<div class="fhidden">Excluded for this patient: ${ph.hidden.map(esc).join(' · ')}</div>` : '') + `</div>`).join('') + `</div>`;
+}
+function renderFinder() {
+  const pane = document.getElementById('pane-finder'), fd = treeData.finder;
+  if (!fd) { pane.innerHTML = '<p class="fdim">No finder data. Run reattach (tools/aml_situations.py attach_finder).</p>'; return; }
+  const qs = fd.questions.filter(q => !q.show_if || fMatch(q.show_if, FA));
+  const form = qs.map(q => `<fieldset><legend>${esc(q.label)}</legend>` + q.options.map(o => {
+    const on = q.type === 'many' ? FA.markers.includes(o.value) : FA[q.key] === o.value;
+    return `<label class="fopt${on ? ' on' : ''}"><input type="${q.type === 'many' ? 'checkbox' : 'radio'}" name="f_${esc(q.key)}" value="${esc(o.value)}"${on ? ' checked' : ''}>${esc(o.label)}</label>`;
+  }).join('') + (q.hint ? `<div class="fdim">${esc(q.hint)}</div>` : '') + `</fieldset>`).join('');
+  const R = fResolve(fd, FA);
+  const out = !R ? '<p class="fdim">Answer disease status, then age and fitness for newly diagnosed disease.</p>' :
+    `<div class="fsum"><b>${esc(R.title)}</b> <span class="fdim">(${esc(R.source || '')})</span><br>ELN 2022 genetic risk: <b>${esc(R.eln.risk)}</b> <span class="fdim">· ${esc(R.eln.basis)}</span></div>` +
+    R.primary.map(fGroup).join('') + (R.agnostic ? fGroup(R.agnostic) : '');
+  pane.innerHTML = `<div class="finder"><form id="fform">${form}<button type="button" id="freset">Reset</button>` +
+    `<p class="fdim">Logic: ${esc(fd.logic.population)}. Contexts: ${esc(fd.logic.contexts)}. HemOnc import: ${esc(fd.logic.hemonc_import)}. Efficacy: ${esc(fd.logic.efficacy)}.</p>` +
+    `<p class="fdim">Reference only. Not a treatment recommendation.</p></form><div id="fout">${out}</div></div>`;
+  document.getElementById('fform').onchange = e => {
+    const t = e.target;
+    if (t.type === 'checkbox') FA.markers = [...document.querySelectorAll('#fform input[name=f_markers]:checked')].map(x => x.value);
+    else FA[t.name.slice(2)] = t.value;
+    fd.questions.forEach(q => { if (q.show_if && !fMatch(q.show_if, FA)) delete FA[q.key]; });
+    renderFinder();
+  };
+  document.getElementById('freset').onclick = () => { Object.keys(FA).forEach(k => delete FA[k]); FA.markers = []; renderFinder(); };
+}
+function showTab(b) {
   document.querySelectorAll('.tabs button').forEach(x => x.classList.toggle('on', x === b));
   document.querySelector('main').classList.toggle('off', b.dataset.tab !== 'tree');
   document.querySelectorAll('.pane').forEach(p => p.classList.toggle('on', p.id === 'pane-' + b.dataset.tab));
-});
+}
+document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => showTab(b));
+// Swipe left/right between tabs (touch). Ignored on the tree canvas, where drag pans the tree.
+let swX = null, swY = null;
+document.addEventListener('touchstart', e => {
+  const t = e.touches[0];
+  swX = e.target.closest('#wrap') ? null : t.clientX; swY = t.clientY;
+}, { passive: true });
+document.addEventListener('touchend', e => {
+  if (swX === null) return;
+  const t = e.changedTouches[0], dx = t.clientX - swX, dy = t.clientY - swY;
+  swX = null;
+  if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+  const bs = [...document.querySelectorAll('.tabs button')], i = bs.findIndex(x => x.classList.contains('on'));
+  const j = i + (dx < 0 ? 1 : -1);
+  if (j >= 0 && j < bs.length) showTab(bs[j]);
+}, { passive: true });
 
 async function load() {
   treeData = await (await fetch('/api/tree')).json();
@@ -785,7 +900,7 @@ async function load() {
   svg.call(zoom);
   attachScopeLit(treeData, scopeLit);
   indexLabelEvidence(treeData);
-  renderCut(); renderRegs();
+  renderCut(); renderRegs(); renderFinder();
   root = d3.hierarchy(treeData);
   root.each(d => { if (d.data.attrs && d.data.attrs.approval_lineage) LINEAGE[d.data.id] = d.data.attrs.approval_lineage; });
   root.x0 = 0; root.y0 = 0;
