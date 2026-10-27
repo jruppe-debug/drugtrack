@@ -12,6 +12,8 @@ data/*.gz
 data/*.prev
 data/*.log
 data/*.err
+data/*.duckdb
+data/diseases/
 .claude/
 __pycache__/
 *.pyc

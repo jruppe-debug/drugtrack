@@ -1,0 +1,83 @@
+{
+ "disease": "CLL",
+ "scope_id": "MONDO_0004948",
+ "scope_name": "B-cell chronic lymphocytic leukemia",
+ "primary_mesh": "D015451",
+ "label_title_extra_terms": [
+  "B-CLL",
+  "BCLL",
+  "CLL"
+ ],
+ "_provenance": {
+  "primary_mesh": "MONDO dbXRefs",
+  "label_title_extra_terms": "MONDO exact synonyms matching ^[A-Z][A-Z0-9-]{1,5}$",
+  "stage": "derive",
+  "labels_read": 24,
+  "phase_words": {
+   "induction": 3,
+   "maintenance": 4,
+   "ramp-up": 1,
+   "continuous": 1
+  },
+  "settings": {
+   "previously untreated": 12,
+   "relapsed or refractory": 5,
+   "previously treated": 12
+  },
+  "class_words": {
+   "CD20-directed cytolytic antibody": 1,
+   "BCL-2 inhibitor": 1
+  },
+  "eligibility.ineligible": {},
+  "eligibility.eligible": {},
+  "biomarkers": {
+   "CD52": 1,
+   "CD22": 1,
+   "17p deletion": 1
+  },
+  "biomarkers_rule": "HGNC approved symbols with a digit, plus defaults biomarker_patterns, found in section 1",
+  "review_subtypes": {
+   "hairy cell leukemia (MONDO_0018935) via 'hairy cell leukemia'": 2,
+   "refractory hairy cell leukemia (MONDO_0004110) via 'refractory hairy cell leukemia'": 2,
+   "hairy cell leukemia (MONDO_0018935) via 'HCL'": 1
+  }
+ },
+ "curated_required": [
+  "eligibility.intensive_regimen (none proposed for CLL)"
+ ],
+ "phase_words": [
+  "induction",
+  "maintenance",
+  "ramp-up",
+  "continuous"
+ ],
+ "settings": {
+  "previously untreated": "previously untreated|treatment[- ]na[i\u00ef]ve|first[- ]line",
+  "relapsed or refractory": "relapsed or refractory|relapsed/refractory|refractory",
+  "previously treated": "previously treated|received at least (?:one|1|two|2) prior|after (?:at least )?(?:one|1|two|2) prior|prior therapy"
+ },
+ "class_words": {
+  "CD20-directed cytolytic antibody": [
+   "L01FA"
+  ],
+  "BCL-2 inhibitor": [
+   "L01XX52"
+  ]
+ },
+ "eligibility": {
+  "ineligible": [],
+  "eligible": [],
+  "intensive_regimen": null
+ },
+ "biomarkers": [
+  "17p deletion",
+  "CD22",
+  "CD52"
+ ],
+ "excluded_subtypes": {
+  "hairy cell leukemia": "MONDO places HCL under CLL; treated as its own disease (PROPOSED - confirm)",
+  "HCL": "abbreviation of hairy cell leukemia"
+ },
+ "nci_drug_page": "https://www.cancer.gov/about-cancer/treatment/drugs/leukemia",
+ "nci_section": "Chronic Lymphocytic Leukemia (CLL)"
+}
