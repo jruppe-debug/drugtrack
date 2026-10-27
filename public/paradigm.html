@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DrugTrack Paradigm</title>
+<style>
+:root{--bg:#f6f7f9;--panel:#fff;--fg:#18232b;--muted:#5c6b74;--line:#d9e0e4;--accent:#0f6e78;--ok:#1d7a55;--warn:#b26b12;--bad:#a33a3a;
+  --mono:ui-monospace,Consolas,monospace;--body:system-ui,-apple-system,"Segoe UI",sans-serif}
+@media (prefers-color-scheme:dark){:root{--bg:#10171b;--panel:#172228;--fg:#e2ebee;--muted:#93a5ad;--line:#2a3a42;--accent:#4cc1c9;--ok:#4cc28c;--warn:#e0a14a;--bad:#e07a7a}}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 var(--body)}
+.wrap{max-width:1180px;margin:0 auto;padding:20px 16px 60px;display:grid;gap:18px}
+h1{font-size:1.5rem;margin:0}h2{font-size:1.1rem;margin:0}
+.bar{display:flex;flex-wrap:wrap;gap:12px;align-items:center}
+.bar button{font:inherit;padding:6px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:4px;cursor:pointer}
+.bar button.on{border-color:var(--accent);color:var(--accent);font-weight:600}
+.muted{color:var(--muted)}.mono{font-family:var(--mono);font-size:.85em}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:14px 16px;display:grid;gap:10px;min-width:0}
+.card h2 small{font-weight:400;color:var(--muted);font-size:.8rem;margin-left:8px}
+.events{display:grid;gap:6px}
+.ev{display:grid;grid-template-columns:92px 1fr;gap:10px;border-left:3px solid var(--accent);padding:4px 10px}
+.ev.upd{border-left-color:var(--line)}
+.chip{display:inline-block;font:11px var(--mono);padding:1px 7px;border:1px solid currentColor;border-radius:999px;margin-right:4px;white-space:nowrap}
+.ok{color:var(--ok)}.warn{color:var(--warn)}.bad{color:var(--bad)}
+.tl{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:.85rem}
+.tl span.arrow{color:var(--muted)}
+details{font-size:.88rem}summary{cursor:pointer;color:var(--accent)}
+table{border-collapse:collapse;width:100%;font-size:.84rem}th,td{text-align:left;padding:5px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--muted);font-weight:500}.scroll{overflow-x:auto}
+a{color:var(--accent)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="bar"><h1>Approval paradigm</h1>
+    <button data-d="cll">CLL</button><button data-d="aml_gen">AML (generic path)</button>
+    <span class="muted" id="summary"></span></div>
+  <div class="muted">Generic pipeline output: scope labels → indication records → verification → development lineage. Lead trial per approval = trial the submission's own FDA documents name most (label section 14 authoritative). Grey bars = label updates with no new trial.</div>
+  <div class="card" id="finder"><h2>Treatment finder</h2>
+    <div class="bar">
+      <label>Stage <select id="f-stage"><option value="">any</option><option>first-line</option><option>relapsed-refractory</option><option>maintenance</option></select></label>
+      <label>Biomarker <select id="f-bm"><option value="">any</option></select></label>
+      <label>Prior therapy contains <input id="f-prior" size="14" placeholder="e.g. ibrutinib"></label>
+      <label><input type="checkbox" id="f-inv" checked> investigational</label>
+      <span class="muted" id="f-count"></span></div>
+    <div id="f-approved" style="display:grid;gap:8px"></div>
+    <h2 style="margin-top:6px">Investigational regimens with live trials</h2>
+    <div class="scroll"><table id="f-inv-table"></table></div>
+    <h2 style="margin-top:6px">Recently read out <small>no trial of this regimen is still enrolling - sorted by most recent result/completion</small></h2>
+    <div class="scroll"><table id="f-recent-table"></table></div>
+  </div>
+  <div class="card" id="contrarian"><h2>Contrarian adversarial review <small>tries to disprove each deterministic link - run <span class="mono">npm run contrarian &lt;disease&gt;</span></small></h2>
+    <div id="contrarian-body"></div>
+  </div>
+  <div id="drugs" style="display:grid;gap:14px"></div>
+  <div class="card"><h2>Not verified / excluded</h2><div class="scroll"><table id="other"></table></div></div>
+  <div class="card"><h2>NCI approved-drug list coverage</h2><div class="scroll"><table id="nci"></table></div></div>
+</div>
+<script>
+const ct = n => n ? `<a class="mono" href="https://clinicaltrials.gov/study/${n}" target="_blank" rel="noopener">${n}</a>` : "—";
+const esc = s => String(s ?? "").replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+const linkCls = l => l.startsWith("verified_printed") ? "ok" : l.startsWith("verified") ? "warn" : "bad";
+async function load(d){
+  document.querySelectorAll(".bar button").forEach(b => b.classList.toggle("on", b.dataset.d === d));
+  const r = await fetch("/api/paradigm?disease=" + d); const P = await r.json();
+  if (P.available === false){ document.getElementById("drugs").innerHTML = `<div class="card">No paradigm.json for ${esc(d)}. Run tools/export_paradigm.py --disease ${esc(d)}.</div>`; return; }
+  document.getElementById("summary").textContent = `${P.scope.mondo} · ${P.counts.drugs} approved drugs · ${P.counts.verified}/${P.counts.records} records verified`;
+  document.getElementById("drugs").innerHTML = P.drugs.map(x => {
+    const f = x.first_in_human || {};
+    const leads = x.events.filter(e => e.kind !== "label update (no new trial)");
+    const tl = [`<span class="chip">FIH</span>${ct(f.nct)} <span class="muted">${esc((f.start||"").slice(0,7))}</span>`]
+      .concat(leads.map(e => `<span class="arrow">→</span><span class="chip ok">${esc(e.date.slice(0,7))}</span>${ct(e.lead)}`)).join(" ");
+    const ev = x.events.map(e => {
+      const lt = x.lead_trials[e.lead] || {}; const ro = x.readouts[e.lead] || {}; const pa = ro.primary_article || {};
+      const ph = Object.entries(e.phases || {}).map(([k,v]) => `${esc(k)}: ${v.map(a => esc(a.join(" + "))).join(" | ")}`).join("; ");
+      return `<div class="ev ${e.kind.startsWith("label") ? "upd" : ""}"><div class="mono">${esc(e.date)}<br>${esc(e.application)} ${esc(e.submission||"")}</div><div>
+        <span class="chip ${linkCls(e.link)}">${esc(e.link.replace("verified_",""))}</span>${e.setting.map(s=>`<span class="chip">${esc(s)}</span>`).join("")}${e.biomarker.map(s=>`<span class="chip warn">${esc(s)}</span>`).join("")}${e.eligibility && e.eligibility !== "not_stated" ? `<span class="chip">${esc(e.eligibility.replaceAll("_"," "))}</span>`:""}
+        <div>Lead ${ct(e.lead)} <span class="muted">${esc(lt.acronym||"")} ${esc(lt.phase||"")} n=${esc(lt.enrollment??"")} · readout ${esc(ro.primary_completion||"—")}${pa.pmid ? ` · <a href="https://pubmed.ncbi.nlm.nih.gov/${pa.pmid}/" target="_blank" rel="noopener">PMID ${pa.pmid}</a>`:""}</span>
+        ${e.supporting.length ? ` · supporting ${e.supporting.map(ct).join(" ")}`:""}${e.named_in_documents_only.length ? ` · named only in FDA documents ${e.named_in_documents_only.map(ct).join(" ")}`:""}</div>
+        <div class="muted">${ph}${e.letter ? ` · <a href="${esc(e.letter)}" target="_blank" rel="noopener">approval letter</a>`:""}</div></div></div>`;
+    }).join("");
+    const rows = (arr) => arr.map(t => `<tr><td>${ct(t.nct)}</td><td>${esc(t.phase)}</td><td>${esc(t.start)}</td><td>${esc(t.regimen)}</td><td>${esc(t.title)}</td></tr>`).join("");
+    return `<div class="card"><h2>${esc(x.drug)}<small>${Object.entries(x.role_counts).map(([k,v])=>`${k} ${v}`).join(" · ")}</small></h2>
+      <div class="tl">${tl}</div><div class="events">${ev}</div>
+      <details><summary>Precursors (${x.precursors.length}) and phase 3 not yet a basis (${x.phase3_not_yet_basis.length})</summary>
+      <div class="scroll"><table><tr><th>NCT</th><th>Phase</th><th>Start</th><th>Regimen</th><th>Title</th></tr>${rows(x.precursors)}
+      <tr><th colspan="5">Phase 3, not the basis of any verified approval</th></tr>${rows(x.phase3_not_yet_basis)}</table></div></details></div>`;
+  }).join("");
+  document.getElementById("other").innerHTML = "<tr><th>Record</th><th>Status</th><th>Reason</th></tr>" +
+    P.not_verified.map(o => `<tr><td class="mono">${esc(o.record)}</td><td>${esc(o.status)}</td><td>${esc(o.reason)}</td></tr>`).join("");
+  document.getElementById("nci").innerHTML = "<tr><th>NCI name</th><th>Labels</th><th>Records</th><th>Outcome</th></tr>" +
+    Object.entries(P.nci_coverage).map(([n,c]) => `<tr><td>${esc(n)}</td><td>${c.labels.length}</td><td>${c.records}</td><td>${esc(c.outcome)}</td></tr>`).join("");
+}
+async function loadContrarian(d){
+  const body = document.getElementById("contrarian-body");
+  const r = await fetch("/api/contrarian?disease=" + d);
+  if (!r.ok) { body.innerHTML = `<div class="muted">No contrarian_review.json for ${esc(d)} yet. Run <span class="mono">npm run contrarian ${esc(d)}</span>.</div>`; return; }
+  const C = await r.json();
+  const pctCls = C.deterministicCorrectPct >= 90 ? "ok" : C.deterministicCorrectPct >= 70 ? "warn" : "bad";
+  const flagged = C.records.filter(x => x.verdict !== "survives");
+  body.innerHTML = `<div class="tl"><span class="chip ${pctCls}">deterministic_correct_% ${esc(C.deterministicCorrectPct)}%</span>
+    <span class="chip">${esc(C.survives)}/${esc(C.total)} survive</span><span class="chip ${C.disproven ? "bad" : ""}">${esc(C.disproven)} disproven</span>
+    <span class="chip ${C.needsReview ? "warn" : ""}">${esc(C.needsReview)} needs review</span>
+    <span class="muted">universe generated ${esc((C.universeGenerated||"").slice(0,10))} · reviewed ${esc((C.reviewedAt||"").slice(0,10))}</span></div>` +
+    (flagged.length ? `<div class="scroll"><table><tr><th>Record</th><th>Deterministic status</th><th>Verdict</th><th>Reason</th></tr>` +
+      flagged.map(x => `<tr><td class="mono">${esc(x.recordId)}</td><td>${esc(x.deterministicStatus)}</td>` +
+        `<td><span class="chip ${x.verdict === "disproven" ? "bad" : "warn"}">${esc(x.verdict)}</span></td><td>${esc(x.reason)}</td></tr>`).join("") +
+      `</table></div>` : `<div class="muted">All ${esc(C.total)} records survived adversarial challenge.</div>`);
+}
+let FIND = null;
+const res1 = r => r.type === "ANALYSIS" ? `${esc(r.endpoint)} ${esc(r.param)} ${esc(r.value)}${r.ci && r.ci[0] ? ` (${esc(r.ci[0])}–${esc(r.ci[1])})` : ""}${r.p_value ? ` p=${esc(r.p_value)}` : ""}`
+  : `${esc(r.endpoint)}: ${esc(r.value)} ${esc(r.units || "")} <span class="muted">${esc(r.group).slice(0, 40)}</span>`;
+function stageOk(st, want){ return !want || st === want || st === "any line" || st === "first-line and relapsed-refractory" && want !== "maintenance"; }
+function renderFinder(){
+  if (!FIND) return;
+  const st = document.getElementById("f-stage").value, bm = document.getElementById("f-bm").value,
+        pr = document.getElementById("f-prior").value.trim().toLowerCase(), showInv = document.getElementById("f-inv").checked;
+  const ap = FIND.approved.filter(o => stageOk(o.stage, st) && (!bm || o.population.biomarker.includes(bm) || !o.population.biomarker.length));
+  document.getElementById("f-approved").innerHTML = ap.map(o => {
+    const tl = o.timeline, chk = Object.entries(tl.checks).map(([k, v]) => `<span class="chip ${v ? "ok" : "bad"}">${esc(k.replaceAll("_", " "))}</span>`).join("");
+    const eff = o.label_efficacy.slice(0, 2).map(t => `<div class="muted">${esc(t.caption).slice(0, 90)} · ${ct(t.nct)}</div>` +
+      t.rows.slice(0, 4).map(r => `<div class="mono">${esc(r.endpoint)} ${esc(r.label).slice(0, 40)}: ${r.cells.map(esc).join(" | ").slice(0, 120)}</div>`).join("")).join("");
+    const steps = [`<span class="chip">FIH</span>${ct(tl.first_in_human && tl.first_in_human.nct)}`].concat(
+      tl.trials.filter(t => t.relation === "same regimen").slice(0, 8).map(t => `<span class="chip">${esc(t.phase.replace("PHASE", "P"))}</span>${ct(t.nct)}`),
+      [`<span class="chip ok">approval ${esc(o.approval_date)}</span>`]).join(" ");
+    return `<div class="ev"><div class="mono">${esc(o.stage)}</div><div><b>${esc(o.ingredients.join(" + "))}</b> <span class="chip ok">approved</span>
+      ${o.population.setting.map(s => `<span class="chip">${esc(s)}</span>`).join("")}${o.population.biomarker.map(s => `<span class="chip warn">${esc(s)}</span>`).join("")}
+      <div>Lead ${ct(o.lead)} · ${esc(o.application)}${o.letter ? ` · <a href="${esc(o.letter)}" target="_blank" rel="noopener">letter</a>` : ""}
+      ${o.registry_results.slice(0, 2).map(r => " · " + res1(r)).join("")}</div>${eff}
+      <details><summary>Pre-approval NCT timeline (${tl.trials.length} trials) ${chk}</summary><div class="tl">${steps}</div>
+      <div class="scroll"><table><tr><th>NCT</th><th>Phase</th><th>Start</th><th>Relation</th><th>Role</th></tr>${tl.trials.map(t =>
+        `<tr><td>${ct(t.nct)}</td><td>${esc(t.phase)}</td><td>${esc(t.start)}</td><td>${esc(t.relation)}</td><td>${esc(t.role)}</td></tr>`).join("")}</table></div></details></div></div>`;
+  }).join("") || `<div class="muted">No approved option for this situation.</div>`;
+  const inv = showInv ? FIND.investigational.filter(g => stageOk(g.stage, st) && (!bm || g.population_union.biomarker.includes(bm))
+    && (!pr || g.population_union.prior_therapy.some(p => p.includes(pr)))) : [];
+  const recent = (FIND.recent_read_out || []).filter(g => stageOk(g.stage, st) && (!bm || g.population_union.biomarker.includes(bm)));
+  document.getElementById("f-count").textContent = `${ap.length} approved · ${inv.length} live investigational · ${recent.length} recently read out`;
+  document.getElementById("f-inv-table").innerHTML = "<tr><th>Regimen</th><th>Top phase</th><th>Live trials</th><th>Population (text-derived)</th><th>Efficacy</th></tr>" +
+    inv.slice(0, 150).map(g => {
+      const e = g.efficacy, rs = e.results ? Object.entries(e.results).slice(0, 2).map(([n, rr]) => `${ct(n)} ${rr.slice(0, 2).map(res1).join("; ")}`).join("<br>") : "";
+      return `<tr><td><b>${esc(g.ingredients.join(" + "))}</b>${g.is_approved_regimen ? ' <span class="chip ok">approved regimen, new trial</span>' : g.contains_approved.length ? ` <span class="chip">with approved ${esc(g.contains_approved.join(", "))}</span>` : ""}</td>
+        <td>${esc(g.top_phase)}</td><td>${g.trials.slice(0, 4).map(t => ct(t.nct)).join(" ")}${g.trials.length > 4 ? ` +${g.trials.length - 4}` : ""}</td>
+        <td>${g.population_union.setting.map(s => `<span class="chip">${esc(s)}</span>`).join("")}${g.population_union.biomarker.map(s => `<span class="chip warn">${esc(s)}</span>`).join("")}${g.population_union.prior_therapy.length ? `<div class="muted">prior: ${esc(g.population_union.prior_therapy.join(", "))}</div>` : ""}</td>
+        <td><span class="muted">${esc(e.source)}</span>${rs ? `<div>${rs}</div>` : ""}</td></tr>`;
+    }).join("");
+  document.getElementById("f-recent-table").innerHTML = "<tr><th>Regimen</th><th>Top phase</th><th>Readout</th><th>Population (text-derived)</th><th>Efficacy</th></tr>" +
+    recent.slice(0, 150).map(g => {
+      const e = g.efficacy, rs = e.results ? Object.entries(e.results).slice(0, 2).map(([n, rr]) => `${ct(n)} ${rr.slice(0, 2).map(res1).join("; ")}`).join("<br>") : "";
+      const ro = g.trials.slice(0, 4).map(t => `${ct(t.nct)} <span class="muted">${esc((t.results_posted || t.primary_completion || "").slice(0, 10))}${t.status === "TERMINATED" ? " · terminated" : ""}${t.why_stopped ? `: ${esc(t.why_stopped).slice(0, 60)}` : ""}</span>`).join("<br>");
+      return `<tr><td><b>${esc(g.ingredients.join(" + "))}</b>${g.is_approved_regimen ? ' <span class="chip ok">approved regimen, new trial</span>' : g.contains_approved.length ? ` <span class="chip">with approved ${esc(g.contains_approved.join(", "))}</span>` : ""}</td>
+        <td>${esc(g.top_phase)}</td><td>${ro}${g.trials.length > 4 ? ` +${g.trials.length - 4}` : ""}</td>
+        <td>${g.population_union.setting.map(s => `<span class="chip">${esc(s)}</span>`).join("")}${g.population_union.biomarker.map(s => `<span class="chip warn">${esc(s)}</span>`).join("")}${g.population_union.prior_therapy.length ? `<div class="muted">prior: ${esc(g.population_union.prior_therapy.join(", "))}</div>` : ""}</td>
+        <td><span class="muted">${esc(e.source)}</span>${rs ? `<div>${rs}</div>` : ""}</td></tr>`;
+    }).join("");
+}
+async function loadFinder(d){
+  const r = await fetch("/api/finder?disease=" + d); FIND = r.ok ? await r.json() : null;
+  if (!FIND) { document.getElementById("finder").style.display = "none"; return; }
+  document.getElementById("finder").style.display = "";
+  document.getElementById("f-bm").innerHTML = '<option value="">any</option>' + FIND.questions.biomarkers.map(b => `<option>${esc(b)}</option>`).join("");
+  renderFinder();
+}
+["f-stage", "f-bm", "f-prior", "f-inv"].forEach(id => document.getElementById(id).addEventListener("input", renderFinder));
+const _load = load; load = async d => { await _load(d); await loadFinder(d); await loadContrarian(d); };
+document.querySelectorAll(".bar button").forEach(b => b.onclick = () => { history.replaceState(null, "", "/paradigm?disease=" + b.dataset.d); load(b.dataset.d); });
+load(new URLSearchParams(location.search).get("disease") || "cll");
+</script>
+</body>
+</html>

@@ -1,0 +1,52 @@
+{
+  "notes": "Generic oncology vocabularies shared by every disease config. make_disease_config.py keeps the entries of the master lists that occur in the disease's own US labels (sections 1 and 2) and records the hit counts; a disease file may override any key.",
+  "phase_words": ["re-induction", "reinduction", "induction", "consolidation", "maintenance", "conditioning", "salvage",
+                  "debulking", "ramp-up", "fixed-duration", "continuous"],
+  "not_phase_context": "\\b(?:intensive|prior|following|after|preclude[sd]?(?: use of)?|ineligible for|candidates? for)\\s+(?:\\w+\\s+)?$",
+  "eligibility_master": {
+    "ineligible": ["ineligible for intensive", "not candidates? for intensive", "preclude[sd]? (?:the )?use of intensive",
+                   "75 years or older", "age 75", "comorbidities that preclude", "considered inappropriate",
+                   "not eligible for", "unfit for", "unable to tolerate"],
+    "eligible": ["eligible for intensive", "fit for intensive", "candidates? for intensive"]
+  },
+  "settings_master": {
+    "newly diagnosed": "newly[- ]diagnosed",
+    "previously untreated": "previously untreated|treatment[- ]na[iï]ve|first[- ]line",
+    "relapsed or refractory": "relapsed or refractory|relapsed/refractory|refractory",
+    "previously treated": "previously treated|received at least (?:one|1|two|2) prior|after (?:at least )?(?:one|1|two|2) prior|prior therapy",
+    "first complete remission maintenance": "first complete remission|continued treatment",
+    "pediatric": "pediatric|1 month and older|1 year of age and older|children"
+  },
+  "class_master": {
+    "anthracycline": ["L01DB"],
+    "hypomethylating agent": ["L01BC07", "L01BC08"],
+    "hypomethylating agents": ["L01BC07", "L01BC08"],
+    "purine analog": ["L01BB"],
+    "alkylating agent": ["L01A"],
+    "anti-CD20 monoclonal antibody": ["L01FA"],
+    "anti-CD20 antibody": ["L01FA"],
+    "CD20-directed cytolytic antibody": ["L01FA"],
+    "BTK inhibitor": ["L01EL"],
+    "BCL-2 inhibitor": ["L01XX52"],
+    "proteasome inhibitor": ["L01XG"],
+    "immunomodulatory agent": ["L04AX"],
+    "corticosteroid": ["H02AB"]
+  },
+  "design_words": ["randomized", "double-blind", "placebo-controlled", "open-label", "single-arm", "multicenter"],
+  "monotherapy_words": "single[- ]agent|monotherapy",
+  "indication_roles": {
+    "transplant_conditioning": "preparative regimen|conditioning regimen|prior to allogeneic|before allogeneic|stem cell mobilization",
+    "supportive_care": "receiving (?:induction or consolidation |myelosuppressive |induction )?chemotherapy|neutrophil recovery|incidence of (?:severe )?(?:infection|febrile neutropenia)|tumor lysis|nausea"
+  },
+  "excluded_roles": {"transplant_conditioning": "conditioning before transplant, not a primary disease-treatment approval",
+                     "supportive_care": "supportive care given alongside chemotherapy, not a disease-directed regimen",
+                     "follow_on_product": "same ingredients, product and setting as an earlier-approved product (biosimilar or reformulation); supplemental to the reference record",
+                     "excluded_subtype": "indication for a disease subtype that the config treats as its own disease"},
+  "registry_start": "2000-01-01",
+  "registry_start_note": "ClinicalTrials.gov launch. An application whose original approval predates it is a pre-registry backbone drug: kept as supplemental, never expected to link to an NCT.",
+  "pk_probes": ["midazolam", "itraconazole", "ketoconazole", "posaconazole", "voriconazole", "fluconazole", "rifampin",
+                "digoxin", "rosuvastatin", "dabigatran", "caffeine", "omeprazole", "pantoprazole", "famotidine",
+                "dextromethorphan", "repaglinide", "metformin", "warfarin", "bupropion", "efavirenz"],
+  "pk_probes_note": "Drug-interaction probe drugs given in PK sub-studies (usually first-in-human). Kept on the trial as pk_probes, never in a regimen key.",
+  "biomarker_patterns": ["del ?\\(?\\d{1,2}[pq]\\)?", "\\d{1,2}[pq] deletion","t\\(\\d+;\\d+\\)", "IGHV", "inv\\(\\d+\\)"]
+}

@@ -18,6 +18,14 @@ export const config = {
   smallModel: process.env.SMALL_MODEL ?? "qwen2.5:3b",
   largeModel: process.env.LARGE_MODEL ?? "qwen2.5:7b",
 
+  // Claude Haiku, used only for the two reasoning-heavy, low-volume roles
+  // (contrarian review, lead discovery) where local Qwen is the weak link -
+  // not the four bulk mechanical fetch subagents, which stay on smallModel
+  // above to keep the high-volume path free and local. Requires
+  // ANTHROPIC_API_KEY in .env; add it there, never pass it on a command line.
+  anthropicApiKey: process.env.ANTHROPIC_API_KEY,
+  haikuModel: process.env.HAIKU_MODEL ?? "claude-haiku-4-5-20251001",
+
   // "Move on fast" policy, split by role: parsing on the small model should
   // be fast, so it gets a tight budget. Reasoning on the large model gets
   // the same short budget it already had - see PARSE_TIMEOUT_MS to tune
