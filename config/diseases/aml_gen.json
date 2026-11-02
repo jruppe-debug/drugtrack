@@ -7,6 +7,19 @@
   "AML",
   "ANLL"
  ],
+ "umbrella_condition_terms": [
+  "acute leukemia",
+  "acute leukemias",
+  "acute leukaemia"
+ ],
+ "umbrella_exclude_terms": [
+  "lymphoblastic",
+  "lymphocytic",
+  "lymphoid",
+  "ALL",
+  "B-ALL",
+  "T-ALL"
+ ],
  "_provenance": {
   "primary_mesh": "MONDO dbXRefs",
   "label_title_extra_terms": "MONDO exact synonyms matching ^[A-Z][A-Z0-9-]{1,5}$",
