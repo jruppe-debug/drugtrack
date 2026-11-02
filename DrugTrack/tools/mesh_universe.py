@@ -11,7 +11,8 @@
 Raw API pages are cached gzipped under data/references/ctgov_mesh/<scope>/. Output: data/mesh_universe.json.gz
 Run:  python tools/mesh_universe.py [--scope-id MONDO_0018874] [--refresh]
 """
-import argparse, gzip, json, os, sys, time, urllib.parse, urllib.request
+import argparse, gzip, json, os, re, sys, time, urllib.parse, urllib.request
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
 import pyarrow.parquet as pq
 
@@ -108,6 +109,144 @@ def slim(s):
                             arms=i.get("armGroupLabels", [])) for i in ai.get("interventions", [])])
 
 
+GENERIC_INTERVENTION = re.compile(
+    r"placebo|standard|sampl|biops|chemo|transplant|best available|investigator|infusion|\bcells?\b|blood|marrow|"
+    r"radiat|control|regimen|therapy|\bcare\b", re.I)
+
+
+def norm_name(s):
+    return re.sub(r"\s+", " ", (s or "").strip().lower())
+
+
+def _norm_text(s):
+    return " " + re.sub(r"[^a-z0-9]+", " ", (s or "").lower()).strip() + " "
+
+
+def text_gap(cfg, scope_id, mesh, trials, refresh):
+    """Second channel: trials whose conditions name the disease in words but carry no derived condition MeSH id in scope
+    (ClinicalTrials.gov leaves some records unmapped, e.g. NCT04811560 'Acute Leukemia', NCT03013998). Every inclusion is
+    a recorded rule hit, no model judgment:
+      T1 entry_term   a condition contains a MeSH entry term of a scope descriptor (bulk MeSH mesh_term, word-bounded)
+      T2 abbreviation a condition contains a config label_title_extra_terms token as a whole word, case-sensitive (AML)
+      T3 umbrella     a condition contains a config umbrella term ('acute leukemia'), no condition contains an
+                      umbrella_exclude term, and either the title names the disease (T1/T2 rule) or a DRUG/BIOLOGICAL
+                      intervention is an anchor: a non-marketed agent (not every name token in a DailyMed rxstring) used in
+                      >= 2 MeSH-universe interventional trials.
+    Rejected trials are kept with the reason so an analyst can audit the cut."""
+    import store
+    c = store.con()
+    entry = sorted({t for (t,) in c.execute("SELECT term_lc FROM mesh_term WHERE ui IN (SELECT unnest(?))",
+                                              [sorted(mesh)]).fetchall()}, key=len, reverse=True)
+    entry_n = [(t, _norm_text(t)) for t in entry]
+    abbrev = [re.compile(r"(?<![A-Za-z0-9])" + re.escape(x) + r"(?![A-Za-z0-9])") for x in cfg.get("label_title_extra_terms", [])]
+    umbrella = [_norm_text(x) for x in cfg.get("umbrella_condition_terms", [])]
+    excl = [re.compile(r"(?<![A-Za-z0-9])" + re.escape(x) + r"(?![A-Za-z0-9])", 0 if x.isupper() else re.I)
+            for x in cfg.get("umbrella_exclude_terms", [])]
+    marketed = set()
+    for (s,) in c.execute("SELECT DISTINCT lower(rxstring) FROM dm_setid_rxcui").fetchall():
+        marketed.update(w for w in re.split(r"[^a-z0-9]+", s) if len(w) > 3)
+    # synonym groups: every name and other_name listed on one intervention record is one agent (union-find)
+    parent = {}
+
+    def find(x):
+        parent.setdefault(x, x)
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+    anchor, uses = defaultdict(set), []
+    for t in trials.values():
+        if t["study_type"] != "INTERVENTIONAL":
+            continue
+        for i in t["interventions"]:
+            if (i.get("type") or "") not in ("DRUG", "BIOLOGICAL"):
+                continue
+            names = [k for k in (norm_name(n) for n in [i["name"]] + (i.get("other_names") or [])) if k]
+            for k in names[1:]:
+                parent[find(k)] = find(names[0])
+            uses += [(k, t["nct"]) for k in names]
+
+    def is_marketed(k):
+        toks = [w for w in re.split(r"[^a-z0-9]+", k) if len(w) > 3]
+        return bool(toks) and all(w in marketed for w in toks)
+    bad_group = {find(k) for k, _ in uses if is_marketed(k)}
+    for k, n in uses:
+        if len(k) > 4 and not GENERIC_INTERVENTION.search(k) and find(k) not in bad_group:
+            anchor[k].add(n)
+    anchor = {k: v for k, v in anchor.items() if len(v) >= 2}
+
+    def names_disease(s):
+        n = _norm_text(s)
+        hit = next((t for t, tn in entry_n if tn in n), None)
+        if hit:
+            return "T1_entry_term", hit
+        hit = next((p.pattern for p in abbrev if p.search(s or "")), None)
+        return ("T2_abbreviation", hit) if hit else (None, None)
+
+    terms = [cfg["scope_name"]] + cfg.get("label_title_extra_terms", []) + cfg.get("umbrella_condition_terms", [])
+    query = " OR ".join(f'"{x}"' if " " in x else x for x in terms)
+    cache = os.path.join(DATA, "references", "ctgov_text", scope_id)
+    os.makedirs(cache, exist_ok=True)
+    studies, token, page = [], None, 0
+    while True:
+        path = os.path.join(cache, f"page_{page:03d}.json.gz")
+        if os.path.exists(path) and not refresh:
+            d = json.load(gzip.open(path, "rt", encoding="utf-8"))
+        else:
+            p = {"query.cond": query, "fields": FIELDS, "pageSize": 1000, "format": "json"}
+            if token:
+                p["pageToken"] = token
+            d = get_json(p)
+            with gzip.open(path, "wt", encoding="utf-8") as f:
+                json.dump(d, f)
+        studies += d.get("studies", [])
+        token = d.get("nextPageToken")
+        page += 1
+        if not token:
+            break
+    added, rejected = {}, defaultdict(list)
+    for s in studies:
+        t = slim(s)
+        if t["nct"] in trials or t["nct"] in added:
+            continue
+        rule = None
+        for cond in t["conditions"]:
+            tier, term = names_disease(cond)
+            if tier:
+                rule = dict(tier=tier, term=term, condition=cond)
+                break
+        if not rule:
+            um = next((x for x in t["conditions"] if any(u in _norm_text(x) for u in umbrella)), None)
+            if not um:
+                rejected["no_disease_condition"].append(t["nct"])
+                continue
+            bad = next((x for x in t["conditions"] for p in excl if p.search(x)), None)
+            if bad:
+                rejected["umbrella_with_excluded_condition"].append(t["nct"])
+                continue
+            tier, term = names_disease(t["brief_title"] or "")
+            if not tier:
+                tier, term = names_disease(t["official_title"] or "")
+            if tier:
+                rule = dict(tier="T3_umbrella_title", term=term, condition=um, title_rule=tier)
+            else:
+                a = sorted({norm_name(n) for i in t["interventions"] if (i.get("type") or "") in ("DRUG", "BIOLOGICAL")
+                            for n in [i["name"]] + (i.get("other_names") or []) if norm_name(n) in anchor})
+                if not a:
+                    rejected["umbrella_no_title_no_anchor"].append(t["nct"])
+                    continue
+                rule = dict(tier="T3_umbrella_drug_anchor", term=a[0], condition=um,
+                            anchor_trials=sorted(anchor[a[0]])[:10])
+        t["scope_hit"] = dict(direct=[], ancestor=[], text=rule)
+        t["universe_channel"] = "condition_text"
+        added[t["nct"]] = t
+    summary = dict(query=query, pulled=len(studies), added=len(added),
+                   by_tier=dict(Counter(t["scope_hit"]["text"]["tier"] for t in added.values())),
+                   rejected={k: len(v) for k, v in rejected.items()}, rejected_ncts={k: v for k, v in rejected.items()},
+                   anchors=len(anchor))
+    return added, summary
+
+
 def aact_universe(mesh_ids):
     """Same universe from AACT in a few SQL queries (no API paging). AACT stores MeSH headings, not ids: headings are mapped
     back to MeSH ids through the bulk MeSH table (exact heading = mesh_record.name), so the output schema matches slim()."""
@@ -196,6 +335,7 @@ def main():
     ap.add_argument("--scope-id", help="override the config scope_id")
     ap.add_argument("--refresh", action="store_true")
     ap.add_argument("--source", choices=["api", "aact"], default="api")
+    ap.add_argument("--no-text-gap", action="store_true", help="MeSH channel only (skip the condition-text channel)")
     a = ap.parse_args()
     if not a.scope_id:
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -233,14 +373,21 @@ def main():
             ids = set(trials)
             cmp_ = dict(text_universe=len(text), mesh_universe=len(ids), both=len(text & ids),
                         text_only=sorted(text - ids), mesh_only=sorted(ids - text), text_pulled_at=c.get("pulled_at"))
+    gap = {}
+    cfg = _dc.load(a.disease)
+    if not a.no_text_gap and (cfg.get("label_title_extra_terms") or cfg.get("umbrella_condition_terms")):
+        added, gap = text_gap(cfg, a.scope_id, mesh, trials, a.refresh)
+        trials.update(added)
     out = dict(generated=datetime.now(timezone.utc).isoformat(timespec="seconds"), scope_id=a.scope_id,
                mondo_nodes=n_nodes, disease_mesh=mesh, mondo_without_mesh=no_mesh, filter=expr,
                mesh_headings=heads, source=API, n_trials=len(trials), aact_crosscheck=aact_check, compare_text=cmp_,
-               trials=trials)
+               text_gap=gap, trials=trials)
     with gzip.open(out_path, "wt", encoding="utf-8") as f:
         json.dump(out, f)
     print(f"scope {a.scope_id}: {n_nodes} MONDO nodes, {len(mesh)} MeSH ids, {len(no_mesh)} nodes without MeSH")
-    print(f"MeSH universe: {len(trials)} trials")
+    print(f"universe: {len(trials)} trials ({len(trials) - gap.get('added', 0)} MeSH, {gap.get('added', 0)} condition-text)")
+    if gap:
+        print(f"condition-text channel: {gap['by_tier']}; rejected {gap['rejected']}")
     if aact_check.get("status") == "ok":
         print(f"AACT browse_conditions cross-check: {aact_check['aact']} trials, both {aact_check['both']}, "
               f"aact_only {len(aact_check['aact_only'])}, api_only {len(aact_check['api_only'])}")
@@ -271,6 +418,7 @@ if __name__ == "__main__":
     INP = [os.path.join(B, "inputs", "opentargets", "disease.parquet")]
     OUT = [_os.path.join(D, x) for x in ["mesh_universe.json.gz"]]
     CODE = ["mesh_universe.py", "disease_config.py"]
+    INP.append(_os.path.join(R, "config", "diseases", f"{a.disease}.json"))
     if a.trace or "show" in _sys.argv or "pull" in _sys.argv or "--help" in _sys.argv:
         main()
     elif not common.stage_current(a.disease, "mesh_universe", INP, OUT, CODE, a.force):
