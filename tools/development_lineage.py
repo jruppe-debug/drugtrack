@@ -103,6 +103,8 @@ def letter(app, date):
 
 
 def main():
+    if hasattr(sys.stdout, "reconfigure"):          # record text holds non-cp1252 characters (e.g. U+2265) on Windows consoles
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     ap = argparse.ArgumentParser()
     ap.add_argument("--disease", required=True)
     a = ap.parse_args()
