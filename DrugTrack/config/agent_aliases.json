@@ -1,0 +1,4 @@
+{
+ "_doc": "Agent name aliases for tools/pipeline_coverage.py. Proposals only count after the script verifies evidence_nct names both the alias (on an intervention) and the agent. Scrubber agents append here; never edit verified flags by hand.",
+ "_example": [{"alias": "iomab-b", "evidence_nct": "NCT02665065", "proposed_by": "example"}]
+}

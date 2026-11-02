@@ -19,3 +19,6 @@ __pycache__/
 *.pyc
 .env.example
 data/dailymed/
+
+# herdr validator outputs (proposals/verdicts; promoted only via deterministic checks)
+validation/

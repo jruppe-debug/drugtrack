@@ -7,6 +7,9 @@ in the universe). Per trial one deterministic disposition:
   rejected_text:<rule>                             pulled by the condition-text channel and rejected (rule name)
   out_of_scope_condition                           conditions neither carry a scope MeSH id nor name the disease
 Agents default to data/sponsor_links.json pipeline keys; --all-unresolved adds every unresolved ('N:') finder ingredient.
+Curated aliases (config/agent_aliases.json, agents propose them): {"AGENT": [{"alias", "evidence_nct", "proposed_by"}]}.
+An alias is used only when its evidence_nct record names the alias on an intervention AND names the agent (or a sponsor
+page found_term for it) in an intervention, title or official title. Unverified aliases are reported, never queried.
 Output: <data_dir>/pipeline_coverage.json     Run: python tools/pipeline_coverage.py --disease aml_gen [AGENT ...]
 """
 import argparse, gzip, json, os, sys, urllib.parse
@@ -38,10 +41,35 @@ def main():
             names = {norm_name(x) for x in [i["name"]] + (i.get("other_names") or []) if x}
             for k in names:
                 syn.setdefault(k, set()).update(names)
+    sponsor = {}
+    sp = os.path.join(disease_config.DATA, "sponsor_links.json")
+    if os.path.exists(sp):
+        sponsor = json.load(open(sp, encoding="utf-8")).get("pipeline", {})
+    alias_path = os.path.join(disease_config.ROOT, "config", "agent_aliases.json")
+    aliases = json.load(open(alias_path, encoding="utf-8")) if os.path.exists(alias_path) else {}
+    alias_check = {}
+    for ag, props in aliases.items():
+        if ag.startswith("_"):
+            continue
+        known = {norm_name(ag)} | {norm_name(k) for k, v in (sponsor.get(ag, {}).get("found_terms") or {}).items() if v}
+        for pr in props:
+            d = get_json({"query.term": f"AREA[NCTId]{pr['evidence_nct']}", "fields": FIELDS, "format": "json"})
+            st = (d.get("studies") or [None])[0]
+            ok, why = False, "evidence_nct not found"
+            if st:
+                t = slim(st)
+                iv = {norm_name(x) for i in t["interventions"] for x in [i["name"]] + (i.get("other_names") or []) if x}
+                text = " ".join([norm_name(t["brief_title"]), norm_name(t["official_title"])] + sorted(iv))
+                has_alias = norm_name(pr["alias"]) in iv
+                has_agent = any(k in text for k in known)
+                ok = has_alias and has_agent
+                why = "verified: alias on intervention, agent named in record" if ok else                     f"rejected: alias_on_intervention={has_alias} agent_named={has_agent}"
+            alias_check.setdefault(ag, []).append(dict(pr, verified=ok, check=why))
+            if ok:
+                syn.setdefault(norm_name(ag), {norm_name(ag)}).add(norm_name(pr["alias"]))
     agents = a.agents
     if not agents:
-        sp = os.path.join(disease_config.DATA, "sponsor_links.json")
-        agents = list(json.load(open(sp, encoding="utf-8")).get("pipeline", {})) if os.path.exists(sp) else []
+        agents = list(sponsor)
         if a.all_unresolved:
             agents += sorted({i for g in F["investigational"] for i in g["ingredients"] if f"N:{i}" in g["regimen_key"]})
     out = {}
@@ -89,7 +117,7 @@ def main():
         live_missing = [r["nct"] for r in rows if r["status"] in LIVE and r["study_type"] == "INTERVENTIONAL"
                         and r["disposition"].startswith("universe_not_finder")]
         print(f"{ag}: {len(rows)} trials {cnt}" + (f"  LIVE IN-SCOPE NOT IN FINDER: {live_missing}" if live_missing else ""))
-    json.dump(dict(source=API, agents=out), open(os.path.join(ddir, "pipeline_coverage.json"), "w", encoding="utf-8"), indent=1)
+    json.dump(dict(source=API, aliases=alias_check, agents=out), open(os.path.join(ddir, "pipeline_coverage.json"), "w", encoding="utf-8"), indent=1)
     print("wrote", os.path.join(ddir, "pipeline_coverage.json"))
 
 
