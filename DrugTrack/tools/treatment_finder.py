@@ -87,7 +87,9 @@ class LocalResolver:
 
 
 def regimen_key(rx, un):
-    return "+".join(sorted(rx, key=int)) + ("|N:" + "+".join(un) if un else "")
+    rx_part = "+".join(sorted(rx, key=int))
+    un_part = "N:" + "+".join(un) if un else ""
+    return "|".join(p for p in (rx_part, un_part) if p)
 
 
 def results_for(ncts, group_hint=None):
