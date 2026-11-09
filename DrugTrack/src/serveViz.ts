@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { createReadStream, existsSync } from "node:fs";
 import { join } from "node:path";
 import { ROOT, config } from "./config.js";
 
@@ -72,8 +72,37 @@ const server = createServer(async (req, res) => {
         res.end(JSON.stringify({ available: false }));
         return;
       }
+      // streamed from disk: the 50 MB file is never held in server memory as one string
       res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-      res.end(await readFile(treePath, "utf8"));
+      createReadStream(treePath).pipe(res);
+      return;
+    }
+
+    // Generic pipeline view per disease (tools/export_paradigm.py): data/diseases/<disease>/paradigm.json, ~100 KB.
+    if (req.url === "/paradigm" || req.url?.startsWith("/paradigm?")) {
+      const html = await readFile(join(ROOT, "public", "paradigm.html"), "utf8");
+      res.writeHead(200, { "Content-Type": "text/html", "Cache-Control": "no-store" });
+      res.end(html);
+      return;
+    }
+    // Contrarian adversarial review (src/review/contrarian.ts): per-disease
+    // deterministic_correct_% and per-record verdicts, same serving shape as
+    // paradigm/finder below.
+    if (req.url?.startsWith("/api/paradigm") || req.url?.startsWith("/api/finder") || req.url?.startsWith("/api/contrarian")) {
+      const d = new URL(req.url, "http://x").searchParams.get("disease") ?? "cll";
+      const file = req.url.startsWith("/api/finder")
+        ? "finder.json"
+        : req.url.startsWith("/api/contrarian")
+          ? "contrarian_review.json"
+          : "paradigm.json";
+      const p = join(ROOT, "data", "diseases", d.replace(/[^a-z0-9_]/gi, ""), file);
+      if (!existsSync(p)) {
+        res.writeHead(404, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ available: false, disease: d }));
+        return;
+      }
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      createReadStream(p).pipe(res);
       return;
     }
 
@@ -102,6 +131,23 @@ const server = createServer(async (req, res) => {
       }
       res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
       res.end(await readFile(scopeLitPath, "utf8"));
+      return;
+    }
+
+    // DailyMed SPL figure images cached by tools/dailymed_label.py ({setid}_v{version}/{file}).
+    // Both path parts are whitelisted so the URL cannot leave data/dailymed/versions.
+    const spl = req.url?.match(/^\/spl-img\/([0-9a-f-]{36}_v\d{1,4})\/([A-Za-z0-9._-]{1,120}\.(?:jpe?g|png|gif))$/i);
+    if (spl) {
+      const [, splDir, splFile] = spl;
+      const imgPath = join(ROOT, "data", "dailymed", "versions", splDir!, splFile!);
+      if (!existsSync(imgPath)) {
+        res.writeHead(404);
+        res.end();
+        return;
+      }
+      const ext = splFile!.split(".").pop()!.toLowerCase();
+      res.writeHead(200, { "Content-Type": ext === "png" ? "image/png" : ext === "gif" ? "image/gif" : "image/jpeg", "Cache-Control": "max-age=86400" });
+      res.end(await readFile(imgPath));
       return;
     }
 

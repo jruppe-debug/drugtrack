@@ -12,8 +12,12 @@ data/*.gz
 data/*.prev
 data/*.log
 data/*.err
+data/*.duckdb
+data/diseases/
 .claude/
 __pycache__/
 *.pyc
 .env.example
 data/dailymed/
+
+# herdr validator outputs under validation/ are tracked; they are promoted only via deterministic checks

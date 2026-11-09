@@ -18,7 +18,7 @@ Categorisation layer (see meta.rules in the output):
     trials with no usable arms go to an explicit audit bucket, never dropped
 
 Run with Clinical Tracker's interpreter:
-  "C:/Users/jwrup/Clinical Tracker/.venv/Scripts/python.exe" tools/export_disease_tree.py
+  ../.venv/Scripts/python.exe tools/export_disease_tree.py
 """
 import argparse, hashlib, io, json, os, re, shutil, sqlite3, sys, time, urllib.error, urllib.parse, urllib.request
 from collections import Counter, defaultdict
@@ -31,8 +31,8 @@ import pyarrow.parquet as pq
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import fidelity as F
 
-CT_DIR = os.environ.get("CLINICAL_TRACKER_DIR", r"C:\Users\jwrup\Clinical Tracker")   # AACT client + credentials only (never copied)
-BRIDGE = os.environ.get("AACT_BRIDGE_DIR", r"C:\Users\jwrup\Clinical Tracker\AACT_bridge")       # every static input file lives here
+CT_DIR = os.environ.get("CLINICAL_TRACKER_DIR", os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")))   # AACT client + credentials only (never copied)
+BRIDGE = os.environ.get("AACT_BRIDGE_DIR", os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "AACT_bridge")))       # every static input file lives here
 BRIDGE_IN = os.path.join(BRIDGE, "inputs")
 BULK = os.path.join(BRIDGE_IN, "opentargets")
 TESTS_IN = os.path.join(BRIDGE_IN, "tests")

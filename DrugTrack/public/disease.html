@@ -71,6 +71,14 @@
   .fbadge.approved { color:var(--ok); border-color:var(--ok); }
   .fbadge.standard { color:var(--acc); border-color:var(--acc); }
   .fbadge.investigational { color:var(--warn); border-color:var(--warn); }
+  .freg.novel { border-left-color:var(--warn); }
+  .fnovel { color:var(--warn); }
+  .fok { color:var(--ok); }
+  .s14 { margin:6px 0; overflow-x:auto; }
+  .s14 img { max-width:100%; background:#fff; }
+  .s14 table, .fcen { border-collapse:collapse; font-size:11px; }
+  .s14 th, .s14 td, .fcen th, .fcen td { border:1px solid var(--line); padding:2px 4px; text-align:left; vertical-align:top; }
+  .finder details { margin:4px 0; }
 </style>
 </head>
 <body>
@@ -256,6 +264,16 @@ function indexLabelEvidence(n, drug) {
     if (da.category === 'APPROVED_AT_SCOPE' && names.some(s => title.includes(s))) DM[drug.id] = a.label_evidence;
   }
   (n.children || []).forEach(c => indexLabelEvidence(c, drug));
+}
+// Label evidence by SPL setid, and its Section 14 tables/figures by the NCT each one cites (finder view).
+const LES = {}, LEN = {};
+function indexLabelItems(n) {
+  const le = (n.attrs || {}).label_evidence;
+  if (le && le.setid && !LES[le.setid]) {
+    LES[le.setid] = le;
+    (le.items || []).forEach(it => (it.ncts || []).forEach(x => (LEN[x] = LEN[x] || []).push({ ...it, setid: le.setid })));
+  }
+  (n.children || []).forEach(indexLabelItems);
 }
 
 function collapse(d) { if (d._full) { d._children = d._full; d.children = null; delete d._full; } else if (d.children) { d._children = d.children; d.children = null; } }
@@ -804,29 +822,91 @@ function fResolve(fd, ans) {
   }
   return { population: pr.population, title: P.title, source: P.source, eln, primary, agnostic };
 }
-function fDrug(d) {
+const ctLink = n => n ? `<a href="https://clinicaltrials.gov/study/${esc(n)}" target="_blank" rel="noopener">${esc(n)}</a>` : '';
+const fHR = h => typeof h === 'object' ? `${esc(h.label)} ${esc(h.hr)} (${esc(h.lo)}–${esc(h.hi)})` : esc(h);
+// HCP page from tools/sponsor_links.py. The link is matched to the drug by generic name, so the brand is shown,
+// and a brand other than the label behind this efficacy tag is flagged (e.g. Onureg for IV azacitidine).
+function fHcp(d, e) {
+  const s = d.sponsor;
+  if (!s || !s.brand) return '';
+  const same = !e || !e.label || e.label.toUpperCase().startsWith(s.brand.toUpperCase());
+  const tag = same ? '' : ` <span class="fwarn">${esc(s.brand)} is a different product than this label</span>`;
+  if (s.hcp && s.hcp.validated) return ` · <a href="${esc(s.hcp.url)}" target="_blank" rel="noopener">${esc(s.brand)} HCP</a> <span class="fdim">(validated: names brand + AML)</span>${tag}`;
+  const b = s.brand_site && s.brand_site.url;
+  return ` · <span class="fdim">${esc(s.brand)} HCP not validated (${esc(s.status || '')})</span>${b ? ` <a href="${esc(b)}" target="_blank" rel="noopener">brand site</a>` : ''}${tag}`;
+}
+// Section 14 tables and figures of one SPL. Items citing a regimen trial come first and are marked.
+function fS14(setid, ncts) {
+  const le = LES[setid];
+  if (!le) return '';
+  const its = (le.items || []).filter(it => String(it.section || '').startsWith('14'));
+  if (!its.length) return '';
+  const hit = it => (it.ncts || []).some(n => ncts.has(n));
+  its.sort((a, b) => hit(b) - hit(a));
+  const one = it => {
+    const cap = `<div class="fdim">${hit(it) ? '<b>regimen trial</b> · ' : ''}${esc(it.caption || '')}${it.study ? ' · ' + esc(it.study) : ''} ${(it.ncts || []).map(ctLink).join(' ')}</div>`;
+    if (it.type === 'figure') return `<div class="s14">${cap}<img loading="lazy" src="/spl-img/${esc(it.img_dir)}/${esc(it.file)}" alt="${esc(it.caption || '')}"></div>`;
+    const head = (it.header && it.header.length ? it.header : [it.columns || []]).map(r => `<tr>${r.map(c => `<th>${esc(c)}</th>`).join('')}</tr>`).join('');
+    const rows = (it.rows || []).slice(0, 40).map(r => `<tr>${r.map(c => `<td>${esc(c)}</td>`).join('')}</tr>`).join('');
+    return `<div class="s14">${cap}<table>${head}${rows}</table>${(it.rows || []).length > 40 ? '<div class="fdim">first 40 rows</div>' : ''}</div>`;
+  };
+  return `<details><summary class="fdim">Label Section 14: ${its.filter(x => x.type === 'table').length} table(s), ${its.filter(x => x.type === 'figure').length} figure(s)</summary>${its.map(one).join('')}</details>`;
+}
+function fDrug(d, ncts) {
   const e = d.efficacy, nm = `<b>${esc(d.name)}</b>${d.brand ? ' (' + esc(d.brand) + ')' : ''}`;
-  if (!e) return `<div class="fdrug">${nm} <span class="fdim">no label efficacy tag</span></div>`;
+  if (!e) return `<div class="fdrug">${nm} <span class="fdim">no label efficacy tag${fHcp(d)}</span></div>`;
   const other = e.applies_to_this_regimen === false;
+  const setid = ((e.page_url || '').match(/setid=([0-9a-f-]{36})/) || [])[1];
   return `<div class="fdrug${other ? ' other' : ''}">${nm}` +
     (other ? ` <span class="fwarn">efficacy from ${esc(e.approved_regimen || 'another regimen')}, not this regimen</span>` : '') +
     `<div>${esc(e.headline || '')}</div>` +
-    (e.hazard_ratios && e.hazard_ratios.length ? `<div class="fdim">HR: ${e.hazard_ratios.map(esc).join(' · ')}</div>` : '') +
+    (e.hazard_ratios && e.hazard_ratios.length ? `<div class="fdim">HR: ${e.hazard_ratios.map(fHR).join(' · ')}</div>` : '') +
     (e.endpoints && e.endpoints.length ? `<div class="fdim">endpoints: ${e.endpoints.map(esc).join(' · ')}</div>` : '') +
-    `<div class="fdim">${e.trial ? 'trial ' + esc(e.trial) + ' · ' : ''}${e.page_url ? `<a href="${esc(e.page_url)}" target="_blank" rel="noopener">DailyMed</a>` : 'DailyMed'}` +
-    `${e.version != null ? ' v' + esc(e.version) : ''}${e.approval_date ? ' · approved ' + esc(e.approval_date) : ''} · ${esc(e.status || '')}</div></div>`;
+    `<div class="fdim">${e.trial ? 'trial ' + ctLink(e.trial) + ' · ' : ''}${e.page_url ? `<a href="${esc(e.page_url)}" target="_blank" rel="noopener">DailyMed</a>` : 'DailyMed'}` +
+    `${e.version != null ? ' v' + esc(e.version) : ''}${e.approval_date ? ' · approved ' + esc(e.approval_date) : ''} · ${esc(e.status || '')}${fHcp(d, e)}</div>` +
+    (setid ? fS14(setid, new Set([...ncts, e.trial].filter(Boolean))) : '') + `</div>`;
 }
+// HemOnc regimen match (local KB, CC BY-NC-SA): components with prior-approval marks, FDA date, studies, results.
+function fHemonc(h) {
+  if (!h) return '';
+  if (!h.code) return `<div class="fdim">HemOnc: no match${(h.unresolved || []).length ? ' · unresolved: ' + h.unresolved.map(esc).join(', ') : ''}</div>`;
+  const comp = (h.component_flags || []).map(c => `<span title="${esc(c.previously_approved_in ? 'previously approved in: ' + c.previously_approved_in : c.first_fda_any ? 'first FDA approval ' + c.first_fda_any : 'no FDA approval in KB')}">${c.novel || c.investigational ? '<b class="fnovel">' + esc(c.name) + '</b>' : esc(c.name)}${esc(c.mark || '')}</span>`).join(' + ');
+  const res = (h.results || []).filter(x => x.metric || x.estimate).map(x => `<div class="fdim">${esc(x.study)} ${ctLink(x.nct)}: ${esc(x.metric || x.endpoint)} ${esc(x.this_arm)} vs ${esc(x.that_arm)} (${esc(x.comparator)})${x.estimate ? ` · ${esc(x.statistic)} ${esc(x.estimate)}${x.lo ? ` (${esc(x.lo)}–${esc(x.hi)})` : ''}` : ''}${x.p ? ' · p ' + esc(x.p) : ''}</div>`).join('');
+  const st = (h.studies || []).map(s => `${esc(s.study)} ${ctLink(s.nct)} ${esc(s.phase || '')}`).join(' · ');
+  return `<div class="fdim">HemOnc (${esc(h.match)}): ${esc(h.name)} #${esc(h.code)} · ${comp}${h.fda_approved_on ? ' · FDA AML ' + esc(h.fda_approved_on) : ' · no FDA AML approval in KB'}</div>` +
+    (st || res ? `<details><summary class="fdim">HemOnc studies (${(h.studies || []).length}) and results (${(h.results || []).length})</summary>${st ? `<div class="fdim">${st}</div>` : ''}${res}</details>` : '');
+}
+const fIsNovel = r => ((r.hemonc && r.hemonc.component_flags) || []).some(c => c.novel || c.investigational);
 function fGroup(g) {
   return `<div class="fgroup"><h3>${esc(g.group)}</h3>` + g.phases.filter(ph => ph.regimens.length || ph.hidden.length).map(ph =>
     `<div class="fphase"><h4>${esc(ph.phase)}${ph.context ? ` <span class="fdim">· ${esc(ph.context)}</span>` : ''}</h4>` +
-    ph.regimens.map(r => `<div class="freg"><span class="fbadge ${esc(r.status)}">${esc(r.status)}</span> <b>${esc(r.name)}</b>` +
+    ph.regimens.filter(r => !FV.novel || fIsNovel(r)).map(r => `<div class="freg${fIsNovel(r) ? ' novel' : ''}"><span class="fbadge ${esc(r.status)}">${esc(r.status)}</span> <b>${esc(r.name)}</b>` +
       (r.note ? ` <span class="fdim">${esc(r.note)}</span>` : '') +
       (r.label_regimens && r.label_regimens.length ? `<div class="fdim">US label regimens: ${r.label_regimens.map(esc).join(' · ')}</div>` : '') +
-      (r.hemonc ? `<div class="fdim">HemOnc: ${esc(r.hemonc.concept_name || '')} ${esc(r.hemonc.concept_code || '')}</div>` : '') +
-      r.drugs.map(fDrug).join('') +
-      (r.trials.length ? `<details><summary class="fdim">${r.trials.length} basis trial(s)</summary>${r.trials.map(t => `<div class="fdim">${esc(t.role)} ${esc(t.nct)} ${esc(t.phase || '')}: ${esc(t.title || '')}</div>`).join('')}</details>` : '') +
+      fHemonc(r.hemonc) +
+      r.drugs.map(d => fDrug(d, r.trials.map(t => t.nct))).join('') +
+      (r.trials.length ? `<details><summary class="fdim">${r.trials.length} basis trial(s)</summary>${r.trials.map(t => `<div class="fdim">${esc(t.role)} ${ctLink(t.nct)} ${esc(t.phase || '')}: ${esc(t.title || '')}</div>`).join('')}</details>` : '') +
       `</div>`).join('') +
     (ph.hidden.length ? `<div class="fhidden">Excluded for this patient: ${ph.hidden.map(esc).join(' · ')}</div>` : '') + `</div>`).join('') + `</div>`;
+}
+const FV = { novel: false };
+// Cross-regimen views: drug double counting, HemOnc logic checks, sponsor pipeline pages.
+function fPanels(fd) {
+  const cen = (fd.drug_census || []).slice().sort((a, b) => b.appearances - a.appearances);
+  const sp = s => !s ? '' : s.hcp ? (s.hcp.validated ? `<a href="${esc(s.hcp.url)}" target="_blank" rel="noopener">${esc(s.brand)} HCP</a>` : esc(s.brand) + ' HCP not validated')
+    : s.url ? `<a href="${esc(s.final || s.url)}" target="_blank" rel="noopener">${esc(s.sponsor)} pipeline</a>${s.validated ? '' : ' (not validated)'}` : esc(s.brand || '') + ' ' + esc(s.status || '');
+  const kind = d => d.investigational ? '<b class="fnovel">investigational</b>' : d.novel ? '<b class="fnovel">novel</b>' : '';
+  const census = `<table class="fcen"><tr><th>Drug</th><th></th><th>First FDA (any / AML)</th><th>AML indications</th><th>Finder regimens</th><th>Populations</th><th>Appearances</th><th>New in</th><th>* in</th><th>† in</th><th>Sponsor page</th></tr>` +
+    cen.filter(d => !FV.novel || d.novel || d.investigational).map(d => `<tr><td>${esc(d.name)}</td><td>${kind(d)}</td><td>${esc(d.first_fda_any || '-')} / ${esc(d.first_fda_aml || '-')}</td><td>${esc(d.fda_aml_indications)}</td>` +
+      `<td>${esc(d.finder_regimens)}</td><td>${esc(d.populations)}</td><td>${esc(d.appearances)}</td>` +
+      [d.new_in, d.asterisk_in, d.dagger_in].map(l => `<td title="${esc((l || []).join('\n'))}">${(l || []).length}</td>`).join('') + `<td>${sp(d.sponsor)}</td></tr>`).join('') + `</table>`;
+  const val = fd.hemonc_validation || [];
+  const vrows = val.map(v => `<div class="fdim"><span class="${v.severity === 'high' ? 'fwarn' : ''}">${esc(v.severity)}</span> ${esc(v.check)} · <b>${esc(v.regimen)}</b> (${esc(v.population)} / ${esc(v.phase)}): ${esc(v.detail)}</div>`).join('');
+  const pipe = ((fd.sponsor_links || {}).pipeline || []).map(p => `<div class="fdim"><b>${esc(p.drug)}</b> · ${esc(p.sponsor)} · ${ctLink(p.nct)} · <a href="${esc(p.final || p.url)}" target="_blank" rel="noopener">pipeline page</a> · ` +
+    `${p.validated ? '<span class="fok">validated: page names drug</span>' : `<span class="fwarn">not validated: ${esc(p.error || p.status)}</span>`}</div>`).join('');
+  return `<details><summary><b>Drug census</b> <span class="fdim">(double counting across regimens and populations; hover counts for regimen names)</span></summary>${census}</details>` +
+    `<details><summary><b>HemOnc logic checks</b> <span class="fdim">(${val.length})</span></summary>${vrows}</details>` +
+    (pipe ? `<details><summary><b>Sponsor pipeline pages</b> <span class="fdim">(investigational agents)</span></summary>${pipe}<div class="fdim">${esc((fd.sponsor_links || {}).method || '')}</div></details>` : '');
 }
 function renderFinder() {
   const pane = document.getElementById('pane-finder'), fd = treeData.finder;
@@ -841,10 +921,14 @@ function renderFinder() {
     `<div class="fsum"><b>${esc(R.title)}</b> <span class="fdim">(${esc(R.source || '')})</span><br>ELN 2022 genetic risk: <b>${esc(R.eln.risk)}</b> <span class="fdim">· ${esc(R.eln.basis)}</span></div>` +
     R.primary.map(fGroup).join('') + (R.agnostic ? fGroup(R.agnostic) : '');
   pane.innerHTML = `<div class="finder"><form id="fform">${form}<button type="button" id="freset">Reset</button>` +
+    `<label class="fopt${FV.novel ? ' on' : ''}" style="margin-left:8px"><input type="checkbox" id="fnovel"${FV.novel ? ' checked' : ''}>Novel agents only</label>` +
+    `<p class="fdim">Marks: <b>*</b> previously FDA-approved in AML (new combination of an approved drug) · <b>†</b> previously approved only in another disease · <b class="fnovel">bold</b> novel (first FDA approval since 2015) or investigational. Source: HemOnc KB.</p>` +
+    fPanels(fd) +
     `<p class="fdim">Logic: ${esc(fd.logic.population)}. Contexts: ${esc(fd.logic.contexts)}. HemOnc import: ${esc(fd.logic.hemonc_import)}. Efficacy: ${esc(fd.logic.efficacy)}.</p>` +
     `<p class="fdim">Reference only. Not a treatment recommendation.</p></form><div id="fout">${out}</div></div>`;
   document.getElementById('fform').onchange = e => {
     const t = e.target;
+    if (t.id === 'fnovel') { FV.novel = t.checked; renderFinder(); return; }
     if (t.type === 'checkbox') FA.markers = [...document.querySelectorAll('#fform input[name=f_markers]:checked')].map(x => x.value);
     else FA[t.name.slice(2)] = t.value;
     fd.questions.forEach(q => { if (q.show_if && !fMatch(q.show_if, FA)) delete FA[q.key]; });
@@ -900,6 +984,7 @@ async function load() {
   svg.call(zoom);
   attachScopeLit(treeData, scopeLit);
   indexLabelEvidence(treeData);
+  indexLabelItems(treeData);
   renderCut(); renderRegs(); renderFinder();
   root = d3.hierarchy(treeData);
   root.each(d => { if (d.data.attrs && d.data.attrs.approval_lineage) LINEAGE[d.data.id] = d.data.attrs.approval_lineage; });

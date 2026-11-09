@@ -111,22 +111,13 @@ def norm(s):
     return re.sub(r"[^a-z0-9]+", " ", s.lower()).strip()
 
 
-def hemonc_regimens():
-    """Normalized regimen name -> (concept_code, concept_name, vocabulary) from HemOncKB concept tables, if present."""
-    out = {}
+def attach_hemonc(fd):
+    """HemOncKB match, component marks, drug census and validation (tools/hemonc_kb.py) when the local KB exists."""
     if not os.path.isdir(HEMONC):
-        return out, "absent: download HemOncKB tables into data/references/hemonc/"
-    files = [f for f in os.listdir(HEMONC) if f.endswith((".tab", ".tsv", ".csv")) and "concept" in f and "rel" not in f]
-    for f in files:
-        with open(os.path.join(HEMONC, f), encoding="utf-8", newline="") as fh:
-            rd = csv.DictReader(fh, delimiter="," if f.endswith(".csv") else "\t")
-            cols = set(rd.fieldnames or [])
-            if not {"concept_name", "concept_class_id"} <= cols:
-                return {}, f"unrecognized columns in {f}: {sorted(cols)[:8]}"
-            for r in rd:
-                if r["concept_class_id"].lower() == "regimen":
-                    out.setdefault(norm(r["concept_name"]), (r.get("concept_code"), r["concept_name"], r.get("vocabulary_id")))
-    return out, f"{len(out)} regimen concepts from {', '.join(files) or 'no concept file'}"
+        fd["logic"]["hemonc_import"] = "absent: unzip HemOncKB (dataverse_files.zip) into data/references/hemonc/"
+        return None
+    import hemonc_kb
+    return hemonc_kb.annotate(fd)
 
 
 def drug_index(tree):
@@ -160,7 +151,6 @@ def build(tree):
     if not path:
         raise SystemExit("no branch:pathway in tree; run aml_pathways.attach_pathways first")
     drugs = drug_index(tree)
-    hem, hem_note = hemonc_regimens()
     pops = {}
     for pop in path["children"]:
         groups = {}
@@ -174,11 +164,10 @@ def build(tree):
                     trials = [dict(nct=t["attrs"].get("nct_id"), role="lead" if t["name"].startswith("LEAD") else "co-basis",
                                    title=t["attrs"].get("title", ""), phase=t["attrs"].get("phase")) for t in r["children"]]
                     rule = next((dict(rr) for pat, rr in REGIMEN_RULES if re.search(pat, r["name"], re.I)), None)
-                    h = hem.get(norm(r["name"]))
                     regs.append(dict(name=r["name"], status=a["pathway_status"], note=a.get("note", ""),
                                      label_regimens=a.get("label_regimens", []), requires=rule, trials=trials,
                                      drugs=[drug_entry(drugs[i], {t["nct"] for t in trials}) for i in a.get("tree_nodes", []) if i in drugs],
-                                     hemonc=dict(code=h[0], name=h[1], vocabulary=h[2]) if h else None))
+                                     hemonc=None))
                 regs.sort(key=lambda x: STATUS_ORDER.get(x["status"], 9))
                 phases.append(dict(phase=ph["name"], context=ctx, order=order, regimens=regs))
             phases.sort(key=lambda x: x["order"])
@@ -189,7 +178,7 @@ def build(tree):
         version=1, scope="AML (non-APL), US FDA labels",
         logic=dict(population="ELN 2022 fitness + age bands of PMC11966364 figs 2-5",
                    contexts="HemOnc-style regimen contexts (hemonc.org section names); HemOncKB concept IDs only when imported",
-                   hemonc_import=hem_note,
+                   hemonc_import=None,
                    efficacy="FDA label section 14 via DailyMed (efficacy_tag); applies_to_this_regimen=false means the "
                             "headline is from the drug's approval-basis trial of another regimen"),
         questions=[dict(q, options=[dict(value=v, label=l) for v, l in q["options"]]) for q in QUESTIONS],
@@ -230,6 +219,9 @@ def resolve(fd, ans):
 
 def attach_finder(tree, out=OUT):
     fd = build(tree)
+    attach_hemonc(fd)
+    import sponsor_links  # brand HCP / sponsor pipeline checks; no-op until tools/sponsor_links.py has been run
+    sponsor_links.attach(fd)
     tree["finder"] = fd
     json.dump(fd, open(out, "w", encoding="utf-8"), indent=1, ensure_ascii=False)
     n = sum(len(ph["regimens"]) for p in fd["populations"].values() for g in p["groups"].values() for ph in g["phases"])

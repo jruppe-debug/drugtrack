@@ -18,14 +18,14 @@ index-match against them with zero network calls and so a run is reproducible ag
 openFDA is deliberately NOT here: it is per-drug live lookup with a cache, and lives in export_disease_tree.py
 (LabelChecker / ApprovalChecker) because its query keys (UNII) come out of this index.
 
-Run:  "C:/Users/jwrup/Clinical Tracker/.venv/Scripts/python.exe" tools/source_index.py [--refresh]
+Run:  ../.venv/Scripts/python.exe tools/source_index.py [--refresh]
 """
 import argparse, csv, json, os, sqlite3, sys, time, urllib.request
 from datetime import datetime, timezone
 
 import pyarrow.parquet as pq
 
-BRIDGE = os.environ.get("AACT_BRIDGE_DIR", r"C:\Users\jwrup\Clinical Tracker\AACT_bridge")
+BRIDGE = os.environ.get("AACT_BRIDGE_DIR", os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "AACT_bridge")))
 BRIDGE_IN = os.path.join(BRIDGE, "inputs")
 BULK = os.path.join(BRIDGE_IN, "opentargets")
 SRC_DIR = os.path.join(BRIDGE_IN, "sources", "gtopdb")
