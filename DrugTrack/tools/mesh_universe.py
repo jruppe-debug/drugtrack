@@ -18,7 +18,7 @@ import pyarrow.parquet as pq
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA = os.path.join(ROOT, "data")
-BRIDGE = os.environ.get("AACT_BRIDGE_DIR", r"C:\Users\jwrup\Clinical Tracker\AACT_bridge")
+BRIDGE = os.environ.get("AACT_BRIDGE_DIR", os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "AACT_bridge")))
 DISEASE_PARQUET = os.path.join(BRIDGE, "inputs", "opentargets", "disease.parquet")
 API = "https://clinicaltrials.gov/api/v2/studies"
 FIELDS = ",".join([

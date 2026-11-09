@@ -15,7 +15,7 @@ import gzip, json, os, re
 from collections import defaultdict
 import disease_config
 
-BRIDGE = os.environ.get("AACT_BRIDGE_DIR", r"C:\Users\jwrup\Clinical Tracker\AACT_bridge")
+BRIDGE = os.environ.get("AACT_BRIDGE_DIR", os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "AACT_bridge")))
 SALT = re.compile(r"\s+(?:phosphate|hydrochloride|dihydrochloride|sodium|disodium|potassium|mesylate|dimesylate|citrate|maleate|"
                   r"acetate|sulfate|fumarate|tartrate|besylate|tosylate|succinate|monohydrate|hydrobromide)$")
 SPLIT = re.compile(r"[()+,/;\[\]]|\band\b|\bwith\b|\bassociated with\b|\bplus\b", re.I)

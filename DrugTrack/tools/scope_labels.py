@@ -25,7 +25,7 @@ from indication_records import sections
 from common import sections_for
 from regimen_key import Crosswalk
 
-BRIDGE = os.environ.get("AACT_BRIDGE_DIR", r"C:\Users\jwrup\Clinical Tracker\AACT_bridge")
+BRIDGE = os.environ.get("AACT_BRIDGE_DIR", os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "AACT_bridge")))
 OT = os.path.join(BRIDGE, "inputs", "opentargets")
 FDA = "https://api.fda.gov/drug"
 

@@ -29,7 +29,7 @@ from regimen_key import Crosswalk, key, DRUG_COMBINATIONS
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA = os.path.join(ROOT, "data")
-BRIDGE = os.environ.get("AACT_BRIDGE_DIR", r"C:\Users\jwrup\Clinical Tracker\AACT_bridge")
+BRIDGE = os.environ.get("AACT_BRIDGE_DIR", os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "AACT_bridge")))
 VCACHE = os.path.join(DATA, "dailymed", "versions")
 OUT = os.path.join(DATA, "indication_records.json")
 NS = {"v3": "urn:hl7-org:v3"}
