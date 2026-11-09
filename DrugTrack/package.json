@@ -8,9 +8,12 @@
     "typecheck": "tsc --noEmit",
     "run": "tsx src/testDrugTrack.ts",
     "studio": "langgraphjs dev",
-    "viz": "tsx src/serveViz.ts"
+    "viz": "tsx src/serveViz.ts",
+    "contrarian": "tsx src/runContrarian.ts",
+    "leads": "tsx src/runLeadDiscovery.ts"
   },
   "dependencies": {
+    "@langchain/anthropic": "^0.3.34",
     "@langchain/core": "^0.3.37",
     "@langchain/langgraph": "^0.2.44",
     "@langchain/ollama": "0.2.4",

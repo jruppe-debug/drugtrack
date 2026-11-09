@@ -1,0 +1,124 @@
+{
+ "disease": "AML_GEN",
+ "scope_id": "MONDO_0018874",
+ "scope_name": "acute myeloid leukemia",
+ "primary_mesh": "D015470",
+ "label_title_extra_terms": [
+  "AML",
+  "ANLL"
+ ],
+ "umbrella_condition_terms": [
+  "acute leukemia",
+  "acute leukemias",
+  "acute leukaemia"
+ ],
+ "umbrella_exclude_terms": [
+  "lymphoblastic",
+  "lymphocytic",
+  "lymphoid",
+  "ALL",
+  "B-ALL",
+  "T-ALL"
+ ],
+ "_provenance": {
+  "primary_mesh": "MONDO dbXRefs",
+  "label_title_extra_terms": "MONDO exact synonyms matching ^[A-Z][A-Z0-9-]{1,5}$",
+  "stage": "derive",
+  "labels_read": 26,
+  "phase_words": {
+   "induction": 20,
+   "consolidation": 13,
+   "maintenance": 1,
+   "conditioning": 1,
+   "ramp-up": 1,
+   "continuous": 8
+  },
+  "settings": {
+   "newly diagnosed": 8,
+   "relapsed or refractory": 8,
+   "first complete remission maintenance": 1,
+   "pediatric": 4
+  },
+  "class_words": {
+   "anthracycline": 3
+  },
+  "eligibility.ineligible": {
+   "preclude[sd]? (?:the )?use of intensive": 4,
+   "75 years or older": 2,
+   "age 75": 1,
+   "comorbidities that preclude": 4
+  },
+  "eligibility.eligible": {},
+  "biomarkers": {
+   "FLT3": 3,
+   "IDH1": 2,
+   "NPM1": 2,
+   "t(15;17)": 1,
+   "CD33": 1,
+   "KMT2A": 1,
+   "IDH2": 1
+  },
+  "biomarkers_rule": "HGNC approved symbols with a digit, plus defaults biomarker_patterns, found in section 1",
+  "review_subtypes": {
+   "acute promyelocytic leukemia (MONDO_0012883) via 'acute promyelocytic leukemia'": 1,
+   "acute promyelocytic leukemia (MONDO_0012883) via 'APL'": 1
+  },
+  "curated_copied_from": "aml.json: eligibility.intensive_regimen, excluded_subtypes"
+ },
+ "curated_required": [],
+ "phase_words": [
+  "induction",
+  "consolidation",
+  "maintenance",
+  "conditioning",
+  "ramp-up",
+  "continuous"
+ ],
+ "settings": {
+  "newly diagnosed": "newly[- ]diagnosed",
+  "relapsed or refractory": "relapsed or refractory|relapsed/refractory|refractory",
+  "first complete remission maintenance": "first complete remission|continued treatment",
+  "pediatric": "pediatric|1 month and older|1 year of age and older|children"
+ },
+ "class_words": {
+  "anthracycline": [
+   "L01DB"
+  ]
+ },
+ "eligibility": {
+  "ineligible": [
+   "preclude[sd]? (?:the )?use of intensive",
+   "75 years or older",
+   "age 75",
+   "comorbidities that preclude"
+  ],
+  "eligible": [],
+  "intensive_regimen": {
+   "phase": "induction",
+   "atc_all": [
+    [
+     "L01BC"
+    ],
+    [
+     "L01DB"
+    ]
+   ],
+   "meaning": "an induction phase holding a pyrimidine analogue (ATC L01BC, cytarabine) plus an anthracycline (L01DB) is intensive chemotherapy, so the population is chemo-eligible"
+  }
+ },
+ "biomarkers": [
+  "CD33",
+  "FLT3",
+  "IDH1",
+  "IDH2",
+  "KMT2A",
+  "NPM1",
+  "t(15;17)"
+ ],
+ "excluded_subtypes": {
+  "acute promyelocytic leukemia": "APL: ATRA / arsenic trioxide pathway, kept supplemental",
+  "APL": "abbreviation of acute promyelocytic leukemia"
+ },
+ "nci_drug_page": "https://www.cancer.gov/about-cancer/treatment/drugs/leukemia",
+ "nci_section": "Acute Myeloid Leukemia (AML)"
+}
