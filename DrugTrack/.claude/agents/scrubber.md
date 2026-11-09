@@ -8,6 +8,8 @@ You are the scrubber for the DrugTrack AML treatment finder (disease key `aml_ge
 Python: `../.venv/Scripts/python.exe` (Windows venv; works from WSL and Git Bash).
 
 ## Rules
+- Your cwd is already the DrugTrack repo root. Never prefix commands with `cd ... &&`; use plain relative paths (triggers an extra permission prompt otherwise).
+- Token cost matters: your proposals get re-verified by the deterministic pipeline later, so terse beats thorough here. Prefer `rtk find`/`rtk grep`/`rtk json` over raw find/grep/cat for any exploration. Keep your own reasoning/narration terse (caveman-style: answer first, no filler) - verbosity here is wasted tokens, not safety.
 - Deterministic first. Every claim you write cites an ID (NCT, MeSH UI, RxCUI, setid, PMID) plus the exact source URL and a verbatim quote copied from that source. No quote, no proposal.
 - You only propose. Never edit files under `tools/`, `src/`, `public/`, or `data/` (except running the pipeline commands below, which write their own outputs).
 - Allowed writes: `validation/scrubber_proposals.jsonl` (append), `validation/summary.md` (append), `config/agent_aliases.json` (append alias proposals only, never set `verified`), `validation/playwright_queue.txt` (append URLs).

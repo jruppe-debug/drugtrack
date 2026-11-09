@@ -11,16 +11,16 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 mkdir -p "$REPO/validation"
 touch "$REPO/validation/summary.md" "$REPO/validation/scrubber_proposals.jsonl" "$REPO/validation/contrarian_verdicts.jsonl"
 
-TOOLS='Read,Grep,Glob,WebFetch,Edit,Write,Bash(curl *),Bash(../.venv/Scripts/python.exe *),Bash(python3 *),Bash(jq *),Bash(zcat *)'
+TOOLS='Read,Grep,Glob,WebFetch,Edit,Write,Bash(curl *),Bash(../.venv/Scripts/python.exe *),Bash(python3 *),Bash(jq *),Bash(zcat *),Bash(rtk *)'
 
 tab=$(herdr tab create --workspace "$HERDR_WORKSPACE_ID" --cwd "$REPO" --label validators --no-focus)
 p1=$(jq -r '.result.root_pane.pane_id' <<<"$tab")
 p2=$(herdr pane split "$p1" --direction right --cwd "$REPO" --no-focus | jq -r '.result.pane.pane_id')
 
 herdr agent start scrubber --kind claude --pane "$p1" -- --agent scrubber --model haiku \
-  --permission-mode acceptEdits --allowedTools "$TOOLS"
+  --permission-mode auto --allowedTools "$TOOLS"
 herdr agent start contrarian --kind claude --pane "$p2" -- --agent contrarian --model haiku \
-  --permission-mode acceptEdits --allowedTools "$TOOLS"
+  --permission-mode auto --allowedTools "$TOOLS"
 
 herdr agent prompt scrubber "/loop $LOOP Work your queue (S1-S4) per your agent instructions, one pass, then append to validation/summary.md."
 herdr agent prompt contrarian "/loop $LOOP Work your queue (C1-C2) per your agent instructions, one pass, then append to validation/summary.md."
