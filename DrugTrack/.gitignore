@@ -20,5 +20,4 @@ __pycache__/
 .env.example
 data/dailymed/
 
-# herdr validator outputs (proposals/verdicts; promoted only via deterministic checks)
-validation/
+# herdr validator outputs under validation/ are tracked; they are promoted only via deterministic checks
